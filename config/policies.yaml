@@ -1,0 +1,24 @@
+# Traffic Classes and Priority Policies
+# Stage 1-5 configuration
+
+traffic_classes:
+  high_priority:
+    name: "High Priority"
+    services: ["VoIP", "Video"]
+    priority_level: 1
+    qos_threshold: 0.05
+    reroute_immediate: true
+
+  medium_priority:
+    name: "Medium Priority"
+    services: ["Web"]
+    priority_level: 2
+    qos_threshold: 0.15
+    reroute_immediate: false
+
+  low_priority:
+    name: "Low Priority"
+    services: ["File Transfer"]
+    priority_level: 3
+    qos_threshold: 0.25
+    reroute_immediate: false

@@ -1,0 +1,32 @@
+# Link Configuration for SDN Project
+# This file defines monitoring parameters for network links
+
+link_monitoring:
+  enabled: true
+  metrics:
+    - utilization
+    - delay
+    - packet_loss
+    - port_statistics
+
+routing_parameters:
+  cost_function:
+    alpha: 0.4    # Utilization weight
+    beta: 0.3     # Delay weight
+    gamma: 0.2    # Loss weight
+    delta: 0.05   # Priority weight
+    epsilon: 0.05 # Reliability weight
+
+stability_mechanisms:
+  threshold_based:
+    enabled: true
+    utilization_threshold: 0.7  # 70%
+    delay_threshold_ms: 100
+
+  hysteresis:
+    enabled: true
+    persistence_seconds: 5
+
+  hold_down:
+    enabled: true
+    duration_seconds: 10

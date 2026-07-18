@@ -1,0 +1,33 @@
+# Decision Engine Configuration
+# Stability-aware rerouting parameters
+
+thresholds:
+  utilization: 0.7
+  delay_ms: 100
+  loss_rate: 0.01
+  delay_increase_ratio: 1.5
+  consecutive_violations: 3
+
+hysteresis:
+  persistence_seconds: 5
+  cooldown_seconds: 10
+
+minimum_improvement:
+  absolute_cost_reduction: 0.1
+  relative_cost_reduction: 0.15
+
+change_budget:
+  max_updates_per_minute: 10
+  max_path_changes_per_minute: 5
+  burst_allowance: 3
+
+hold_down:
+  enabled: true
+  duration_seconds: 10
+
+path_cost_weights:
+  alpha: 0.4
+  beta: 0.3
+  gamma: 0.2
+  delta: 0.05
+  epsilon: 0.05

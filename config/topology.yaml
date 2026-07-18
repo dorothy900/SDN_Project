@@ -1,0 +1,32 @@
+# SDN Traffic Engineering Project - Topology Configuration
+# Topic: Resilient and Stability-aware SDN Traffic Engineering Framework
+
+topology:
+  name: "Geant2012"
+  graphml_path: "data/Geant2012.graphml"
+
+mininet:
+  link_bandwidth_mbps: 100
+  link_delay: "10ms"
+  host_subnet: "10.0.0.0/24"
+
+controller:
+  type: "OpenDaylight"
+  ip: "127.0.0.1"
+  port: 6653
+  rest_port: 8181
+  username: "admin"
+  password: "admin"
+
+monitoring:
+  interval_seconds: 2
+  sample_duration_seconds: 60
+
+traffic_classes:
+  high_priority:
+    - "VoIP"
+    - "Video"
+  medium_priority:
+    - "Web"
+  low_priority:
+    - "File Transfer"
