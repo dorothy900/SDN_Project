@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Statistics Collector - Gather data from OVS and save to CSV
+Week 2: Rate calculation, link utilization, and more
 """
 
 import csv
@@ -9,7 +10,9 @@ import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
+
+import yaml
 
 from .models import PortStatistics, LinkStatistics
 
@@ -17,10 +20,32 @@ from .models import PortStatistics, LinkStatistics
 class StatisticsCollector:
     """Collect port statistics from OVS using ovs-ofctl."""
 
-    def __init__(self, output_dir: Path = Path("results/stage1")):
+    def __init__(self, output_dir: Path = Path("results/stage2"), config_path: str = "config/topology.yaml"):
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.previous_stats: Dict[Tuple[str, int], Tuple[float, int, int]] = {}
+        
+        # Load configuration
+        self.link_capacities: Dict[str, float] = {}  # switch-port -> capacity in Mbps
+        self._load_config(config_path)
+    
+    def _load_config(self, config_path: str) -> None:
+        """Load topology and link capacity configuration."""
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+                # Default capacity if not specified
+                self.default_capacity = config.get("mininet", {}).get("link_bandwidth_mbps", 100)
+        except Exception:
+            self.default_capacity = 100.0  # Fallback to 100 Mbps
+    
+    def set_link_capacity(self, switch: str, port: int, capacity_mbps: float) -> None:
+        """Set capacity for a specific switch-port."""
+        self.link_capacities[(switch, port)] = capacity_mbps
+    
+    def get_link_capacity(self, switch: str, port: int) -> float:
+        """Get capacity for a specific switch-port (default to configured capacity)."""
+        return self.link_capacities.get((switch, port), self.default_capacity)
 
     @staticmethod
     def _run_command(command: List[str]) -> str:
@@ -87,10 +112,21 @@ class StatisticsCollector:
     def calculate_rates(
         self,
         stats_list: List[PortStatistics],
-        sample_time: float,
+        sample_time: Optional[float] = None,
     ) -> List[PortStatistics]:
-        """Calculate RX/TX rates using previous sample."""
+        """
+        Week 2 Day 1: Calculate RX/TX rates using actual time interval.
+        Uses real query time difference between samples, not fixed assumptions.
+        
+        Args:
+            stats_list: Current port statistics
+            sample_time: Optional explicit sample time (if None, uses current time)
+        
+        Returns:
+            Port statistics with rate fields calculated
+        """
         result = []
+        current_time = sample_time if sample_time is not None else time.time()
 
         for stats in stats_list:
             key = (stats.switch, stats.port)
@@ -101,13 +137,25 @@ class StatisticsCollector:
 
             if prev is not None:
                 prev_time, prev_rx, prev_tx = prev
-                delta_t = sample_time - prev_time
+                delta_t = current_time - prev_time
 
-                if delta_t > 0:
-                    rx_mbps = (stats.rx_bytes - prev_rx) * 8 / delta_t / 1_000_000
-                    tx_mbps = (stats.tx_bytes - prev_tx) * 8 / delta_t / 1_000_000
+                if delta_t > 0.001:  # Avoid division by near-zero
+                    # Calculate byte delta (handle counter wraps gracefully)
+                    delta_rx = stats.rx_bytes - prev_rx
+                    delta_tx = stats.tx_bytes - prev_tx
+                    
+                    # If counter appears to wrap (unlikely in short intervals), use 0
+                    if delta_rx < 0:
+                        delta_rx = 0
+                    if delta_tx < 0:
+                        delta_tx = 0
+                    
+                    # Convert bytes to Mbps (bits per second / 1e6)
+                    rx_mbps = delta_rx * 8 / delta_t / 1_000_000
+                    tx_mbps = delta_tx * 8 / delta_t / 1_000_000
 
-            self.previous_stats[key] = (sample_time, stats.rx_bytes, stats.tx_bytes)
+            # Save current state for next calculation
+            self.previous_stats[key] = (current_time, stats.rx_bytes, stats.tx_bytes)
 
             updated_stats = PortStatistics(
                 timestamp=stats.timestamp,
@@ -123,13 +171,87 @@ class StatisticsCollector:
             result.append(updated_stats)
 
         return result
+    
+    def calculate_utilization(
+        self,
+        port_stats: PortStatistics,
+    ) -> float:
+        """
+        Week 2 Day 2: Calculate link utilization for a port.
+        Utilization is max(rx_mbps, tx_mbps) / link capacity.
+        
+        Args:
+            port_stats: Port statistics with rates calculated
+        
+        Returns:
+            Utilization value (0.0 to 1.0)
+        """
+        capacity = self.get_link_capacity(port_stats.switch, port_stats.port)
+        if capacity <= 0:
+            return 0.0
+        
+        # Use the maximum of RX and TX as the direction carrying traffic
+        traffic_rate = max(port_stats.rx_mbps, port_stats.tx_mbps)
+        
+        return min(traffic_rate / capacity, 1.0)
+    
+    def aggregate_link_statistics(
+        self,
+        port_stats_list: List[PortStatistics],
+        link_mapper,
+    ) -> List[LinkStatistics]:
+        """
+        Week 2 Day 2: Aggregate port statistics to link-level statistics.
+        Maps port stats to bidirectional link stats.
+        
+        Args:
+            port_stats_list: Port-level statistics
+            link_mapper: LinkMapper instance with port-to-link mapping
+        
+        Returns:
+            List of link-level statistics
+        """
+        link_stats: Dict[str, LinkStatistics] = {}
+        
+        for port_stats in port_stats_list:
+            # Find which link this port belongs to
+            link_info = link_mapper.get_link_for_port(port_stats.switch, port_stats.port)
+            if link_info is None:
+                continue
+            
+            link_id, is_direction_a = link_info
+            utilization = self.calculate_utilization(port_stats)
+            
+            if link_id not in link_stats:
+                # Initialize new link statistics
+                link_stats[link_id] = LinkStatistics(
+                    timestamp=port_stats.timestamp,
+                    link_id=link_id,
+                    utilization=utilization,
+                    rx_mbps=port_stats.rx_mbps,
+                    tx_mbps=port_stats.tx_mbps,
+                    status="up",
+                )
+            else:
+                # Update existing link stats - combine both directions
+                existing = link_stats[link_id]
+                link_stats[link_id] = LinkStatistics(
+                    timestamp=port_stats.timestamp,
+                    link_id=link_id,
+                    utilization=max(existing.utilization, utilization),
+                    rx_mbps=existing.rx_mbps + port_stats.rx_mbps,
+                    tx_mbps=existing.tx_mbps + port_stats.tx_mbps,
+                    status="up",
+                )
+        
+        return list(link_stats.values())
 
     def save_to_csv(
         self,
         stats_list: List[PortStatistics],
         filename: str = "port_statistics.csv",
     ) -> None:
-        """Save statistics to CSV file."""
+        """Save port statistics to CSV file."""
         filepath = self.output_dir / filename
         file_exists = filepath.exists()
 
@@ -160,4 +282,43 @@ class StatisticsCollector:
                     stats.tx_bytes,
                     f"{stats.rx_mbps:.4f}",
                     f"{stats.tx_mbps:.4f}",
+                ])
+    
+    def save_link_stats_to_csv(
+        self,
+        link_stats_list: List[LinkStatistics],
+        filename: str = "link_statistics.csv",
+    ) -> None:
+        """
+        Week 2: Save link-level statistics to CSV.
+        Includes timestamp, link_id, utilization, rates, status, delay, loss.
+        """
+        filepath = self.output_dir / filename
+        file_exists = filepath.exists()
+        
+        with filepath.open("a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            
+            if not file_exists:
+                writer.writerow([
+                    "timestamp",
+                    "link_id",
+                    "utilization",
+                    "rx_mbps",
+                    "tx_mbps",
+                    "status",
+                    "delay_ms",
+                    "packet_loss",
+                ])
+            
+            for stats in link_stats_list:
+                writer.writerow([
+                    stats.timestamp.strftime("%Y-%m-%d %H:%M:%S.%f"),
+                    stats.link_id,
+                    f"{stats.utilization:.4f}",
+                    f"{stats.rx_mbps:.4f}",
+                    f"{stats.tx_mbps:.4f}",
+                    stats.status,
+                    f"{stats.delay_ms:.2f}" if stats.delay_ms is not None else "",
+                    f"{stats.packet_loss:.6f}" if stats.packet_loss is not None else "",
                 ])
