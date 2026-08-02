@@ -69,8 +69,8 @@ class PathCost:
                     metrics['total_delay_ms'] += stats.delay_ms
                     metrics['max_delay_ms'] = max(metrics['max_delay_ms'], stats.delay_ms)
 
-                if stats.loss_rate:
-                    metrics['total_loss'] += stats.loss_rate
+                if stats.packet_loss:
+                    metrics['total_loss'] += stats.packet_loss
 
         return metrics
 
@@ -99,6 +99,32 @@ class PathCost:
 
         return (abs_improvement >= min_abs_reduction or
                 rel_improvement >= min_rel_reduction)
+
+    def compare_paths(
+        self,
+        old_path: List[str],
+        new_path: List[str],
+        min_abs_reduction: float = 0.1,
+        min_rel_reduction: float = 0.15,
+    ) -> Dict[str, float]:
+        """Return comparable cost and gain metrics for two candidate paths."""
+        old_cost = self.calculate_path_cost(old_path)
+        new_cost = self.calculate_path_cost(new_path)
+        abs_improvement = old_cost - new_cost
+        rel_improvement = abs_improvement / old_cost if old_cost > 0 else 0.0
+        accepted = self.is_improvement(
+            old_path,
+            new_path,
+            min_abs_reduction=min_abs_reduction,
+            min_rel_reduction=min_rel_reduction,
+        )
+        return {
+            "old_cost": round(old_cost, 6),
+            "new_cost": round(new_cost, 6),
+            "absolute_improvement": round(abs_improvement, 6),
+            "relative_improvement": round(rel_improvement, 6),
+            "accepted": accepted,
+        }
 
     def _get_link_id(self, u: str, v: str) -> str:
         nodes = sorted([str(u), str(v)])

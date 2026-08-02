@@ -66,13 +66,14 @@ class LinkHistory:
         Calculate trend: positive if recent values are increasing.
         Compares last 20% vs first 20% of the window.
         """
-        n = len(self.utilization_window)
+        window = list(self.utilization_window)
+        n = len(window)
         if n < 5:
             return None
-        
+
         segment = max(1, n // 5)
-        first_avg = sum(self.utilization_window[:segment]) / segment
-        last_avg = sum(self.utilization_window[-segment:]) / segment
+        first_avg = sum(window[:segment]) / segment
+        last_avg = sum(window[-segment:]) / segment
         
         return last_avg - first_avg
     

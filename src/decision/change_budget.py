@@ -61,6 +61,7 @@ class ChangeBudget:
     def record_path_change(self):
         """Record that a path change occurred."""
         self.path_change_times.append(time.time())
+        self.record_update()
         self._clean_old_entries(self.path_change_times)
 
     def get_update_count(self) -> int:
@@ -81,3 +82,12 @@ class ChangeBudget:
         """Reset all budget tracking."""
         self.update_times.clear()
         self.path_change_times.clear()
+
+    def get_budget_state(self) -> dict:
+        """Return a serializable snapshot of the current rolling budget state."""
+        return {
+            "update_count": self.get_update_count(),
+            "path_change_count": self.get_path_change_count(),
+            "available_updates": self.get_available_updates(),
+            "can_change_path": self.can_change_path(),
+        }

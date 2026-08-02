@@ -11,6 +11,8 @@ thresholds:
 hysteresis:
   persistence_seconds: 5
   cooldown_seconds: 10
+  enter_threshold: 0.70
+  release_threshold: 0.65
 
 minimum_improvement:
   absolute_cost_reduction: 0.1
@@ -24,6 +26,9 @@ change_budget:
 hold_down:
   enabled: true
   duration_seconds: 10
+
+recovery:
+  window_seconds: 5
 
 path_cost_weights:
   alpha: 0.4

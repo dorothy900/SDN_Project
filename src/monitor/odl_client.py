@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 """
 OpenDaylight REST Client - Collect statistics from controller
+
+NOTE: this is an optional, controller-mediated path to the same port/link
+statistics that `StatisticsCollector.parse_ovs_port_stats()` already gets by
+querying OVS directly via `ovs-ofctl` -- that path is complete and is what
+TrafficMonitor actually uses to drive rate/utilization calculation and, from
+there, path-cost-based routing. `get_port_statistics()` below is intentionally
+left unparsed (it returns `[]` even on a successful response): finishing it
+against OpenDaylight's real RESTCONF port-statistics schema without a live
+controller to verify against would be guessing at an untestable contract.
+Complete it only once there is a real ODL instance available to validate
+against; until then, the OVS-direct path is the actual data source.
 """
 
 import json

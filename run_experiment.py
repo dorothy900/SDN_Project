@@ -10,17 +10,23 @@ Run complete experiment cycle:
 """
 
 import argparse
-import sys
 from pathlib import Path
+
+from experiments.run_baseline_comparison import BaselineComparison
+from experiments.run_decision_engine_validation import DecisionEngineValidation
+from experiments.run_pilot_experiments import PilotExperimentRunner
+from experiments.run_stability_validation import StabilityValidation
 
 
 def main():
     parser = argparse.ArgumentParser(description="SDN Dissertation Experiment Runner")
     parser.add_argument("--stage", type=str, default="full",
-                        choices=["1", "2", "3", "4", "5", "full"],
-                        help="Stage to run (1-5 or full)")
+                        choices=["1", "2", "3", "4", "5", "6", "full"],
+                        help="Stage to run (1-6 or full)")
     parser.add_argument("--scenario", type=str, default="all",
                         help="Scenario to run for stage 6")
+    parser.add_argument("--repeat", type=int, default=3,
+                        help="Number of repeated runs for stage 6 aggregation")
 
     args = parser.parse_args()
 
@@ -55,10 +61,10 @@ def main():
         print("-"*60)
         stage5()
 
-    if args.stage == "full" or args.scenario:
+    if args.stage in ["6", "full"]:
         print("\nStage 6: Pilot Experiments")
         print("-"*60)
-        stage6(args.scenario)
+        stage6(args.scenario, args.repeat)
 
     print("\n" + "="*60)
     print("Experiment complete!")
@@ -71,7 +77,7 @@ def stage1():
     print("  - Topology verification complete (40 nodes, 61 links)")
 
     output_file = Path("results/stage1/topology_validation.txt")
-    output_file.parent.mkdir(exist_ok=True)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
     output_file.write_text("Geant2012: 40 nodes, 61 links, connected\n")
 
 
@@ -86,6 +92,8 @@ def stage3():
     """Stage 3: Baseline Routing"""
     print("  - Static shortest path baseline")
     print("  - Dynamic link-cost baseline")
+    print("  - Generating Stage 3 deliverables")
+    BaselineComparison(output_dir=Path("results/stage3")).run(repeat=3)
 
 
 def stage4():
@@ -93,18 +101,24 @@ def stage4():
     print("  - Threshold detection enabled")
     print("  - Persistence checker active")
     print("  - Change budget operational")
+    print("  - Generating Stage 4 deliverables")
+    DecisionEngineValidation(output_dir=Path("results/stage4")).run()
 
 
 def stage5():
     """Stage 5: Stability"""
     print("  - Hold-down timer active")
     print("  - Traffic policies loaded")
+    print("  - Generating Stage 5 deliverables")
+    StabilityValidation(output_dir=Path("results/stage5")).run()
 
 
-def stage6(scenario):
+def stage6(scenario, repeat: int = 3):
     """Stage 6: Experiments"""
     print(f"  - Running scenario: {scenario}")
+    print(f"  - Repeated runs: {repeat}")
     print("  - Collecting results")
+    PilotExperimentRunner(output_dir=Path("results/pilot")).run(repeat=repeat, scenario=scenario)
 
 
 if __name__ == "__main__":

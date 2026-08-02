@@ -123,6 +123,14 @@ class NetworkState:
         """Get state for a single link."""
         full_state = self.get_network_state()
         return full_state["links"].get(link_id)
+
+    def get_link_stats(self, link_id: str) -> Optional[LinkStatistics]:
+        """Return the latest typed statistics object for a link."""
+        return self.link_monitor.get_link_stats(link_id)
+
+    def get_active_graph(self):
+        """Expose the currently active topology graph to routing modules."""
+        return self.topology.get_active_graph()
     
     def save_state_snapshot(self, filename: str = "network_state_snapshot.json") -> None:
         """

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Persistence Checker - Hysteresis mechanism
-Verify that violations persist before acting
+Persistence Checker - Hysteresis mechanism.
+Require congestion to persist across a configurable number of samples.
 """
+
+from __future__ import annotations
 
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Deque, Dict, List, Optional
 
 
 @dataclass
@@ -15,15 +17,21 @@ class PersistenceWindow:
     link_id: str
     metric: str
     start_time: float
-    violations: deque
+    violations: Deque[tuple]
 
 
 class PersistenceChecker:
     """Check if violations persist long enough (hysteresis)."""
 
-    def __init__(self, persistence_seconds: float = 5.0, cooldown_seconds: float = 10.0):
+    def __init__(
+        self,
+        persistence_seconds: float = 5.0,
+        cooldown_seconds: float = 10.0,
+        required_samples: int = 3,
+    ):
         self.persistence_seconds = persistence_seconds
         self.cooldown_seconds = cooldown_seconds
+        self.required_samples = required_samples
 
         self.active_windows: Dict[tuple, PersistenceWindow] = {}  # (link, metric) -> window
         self.last_reroute_time: Dict[tuple, float] = {}  # (link, metric) -> timestamp
@@ -48,7 +56,7 @@ class PersistenceChecker:
         return True
 
     def record_violation(self, link_id: str, metric: str, value: float) -> bool:
-        """Record a violation and check if persistence requirement is met."""
+        """Record a violating sample and return True once persistence is met."""
         key = (link_id, metric)
 
         if key not in self.active_windows:
@@ -57,9 +65,7 @@ class PersistenceChecker:
 
         window = self.active_windows[key]
         window.violations.append((time.time(), value))
-
-        elapsed = time.time() - window.start_time
-        return elapsed >= self.persistence_seconds
+        return self.check_persistence(link_id, metric)
 
     def check_persistence(self, link_id: str, metric: str) -> bool:
         """Check if condition has persisted long enough."""
@@ -67,8 +73,42 @@ class PersistenceChecker:
         if key not in self.active_windows:
             return False
 
-        elapsed = time.time() - self.active_windows[key].start_time
-        return elapsed >= self.persistence_seconds
+        window = self.active_windows[key]
+        elapsed = time.time() - window.start_time
+        enough_samples = len(window.violations) >= self.required_samples
+        return enough_samples and elapsed >= self.persistence_seconds
+
+    def evaluate_sample(
+        self,
+        link_id: str,
+        metric: str,
+        value: float,
+        is_violation: bool,
+    ) -> Dict[str, object]:
+        """
+        Process one sample and expose whether the violation is accepted.
+
+        This mirrors the Week 4 Day 2 validation method of comparing short spikes
+        versus sustained overload across a configurable number of samples.
+        """
+        if not is_violation:
+            self.clear_window(link_id, metric)
+            return {
+                "accepted": False,
+                "sample_count": 0,
+                "window_age": 0.0,
+                "reason": "below_threshold",
+            }
+
+        accepted = self.record_violation(link_id, metric, value)
+        sample_count = self.get_violation_count(link_id, metric)
+        window_age = self.get_window_age(link_id, metric) or 0.0
+        return {
+            "accepted": accepted,
+            "sample_count": sample_count,
+            "window_age": round(window_age, 6),
+            "reason": "persistent" if accepted else "collecting_samples",
+        }
 
     def clear_window(self, link_id: str, metric: str):
         """Clear tracking window for a condition."""
@@ -94,3 +134,17 @@ class PersistenceChecker:
         if key not in self.active_windows:
             return None
         return time.time() - self.active_windows[key].start_time
+
+    def get_violation_count(self, link_id: str, metric: str) -> int:
+        """Return the number of violating samples recorded in the current window."""
+        key = (link_id, metric)
+        if key not in self.active_windows:
+            return 0
+        return len(self.active_windows[key].violations)
+
+    def get_window_samples(self, link_id: str, metric: str) -> List[float]:
+        """Return recorded sample values for debugging and CSV export."""
+        key = (link_id, metric)
+        if key not in self.active_windows:
+            return []
+        return [float(value) for _, value in self.active_windows[key].violations]

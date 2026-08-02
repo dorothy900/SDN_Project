@@ -40,6 +40,14 @@ python3 run_experiment.py --stage 2
 #   - history_window_test.csv
 ```
 
+**Port/link statistics come from OVS directly, not from OpenDaylight.**
+`StatisticsCollector.parse_ovs_port_stats()` (`src/monitor/statistics_collector.py`) queries
+`ovs-ofctl dump-ports` directly and is the complete, working path that feeds rate → utilization →
+`NetworkState` → path-cost-based routing. `ODLClient.get_port_statistics()`
+(`src/monitor/odl_client.py`) is an alternative, controller-mediated path to the same data that was
+never finished (it returns `[]` even on a successful response) and isn't called anywhere in the
+current pipeline — see the note at the top of `odl_client.py` for why it's left that way.
+
 ### 3. Baseline Routing (Stage 3)
 
 ```bash

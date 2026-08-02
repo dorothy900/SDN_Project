@@ -86,8 +86,14 @@ class LinkMonitor:
             event = LinkEvent(ts, link_id, old_status, status)
             self.link_events.append(event)
             self.event_count += 1
-        
+
         self.link_statuses[link_id] = status
+
+        # Keep the last-seen LinkStatistics snapshot in sync so
+        # get_all_link_stats()/get_network_state() reflect manual overrides.
+        existing = self.link_stats.get(link_id)
+        if existing is not None:
+            existing.status = status
     
     def get_link_status(self, link_id: str) -> Optional[str]:
         """Get current status of a link."""
