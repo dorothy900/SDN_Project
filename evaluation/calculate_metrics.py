@@ -18,6 +18,8 @@ class MetricsCalculator:
 
     def calculate_network_performance(self, data: Sequence[Dict[str, object]]) -> Dict[str, float]:
         """Compute average delay, throughput, and packet loss."""
+        if not data:
+            raise ValueError("calculate_network_performance() received no rows to average")
         delays = [float(row["delay_ms"]) for row in data]
         throughputs = [float(row["throughput_mbps"]) for row in data]
         losses = [float(row["packet_loss"]) for row in data]
@@ -38,6 +40,8 @@ class MetricsCalculator:
 
     def calculate_controller_efficiency(self, data: Sequence[Dict[str, object]]) -> Dict[str, float]:
         """Compute average controller decision time."""
+        if not data:
+            raise ValueError("calculate_controller_efficiency() received no rows to average")
         times = [float(row["decision_time_ms"]) for row in data]
         return {
             "decision_time_avg_ms": round(statistics.mean(times), 6),
@@ -50,6 +54,12 @@ class MetricsCalculator:
         algorithm: str,
     ) -> Dict[str, object]:
         """Combine all metric families into one summary row."""
+        if not data:
+            raise ValueError(
+                "No rows to summarize for scenario=%r algorithm=%r -- check the scenario script "
+                "actually emitted rows for this algorithm before it reached the metrics pipeline."
+                % (scenario, algorithm)
+            )
         summary = {"scenario": scenario, "algorithm": algorithm, "sample_count": len(data)}
         summary.update(self.calculate_network_performance(data))
         summary.update(self.calculate_routing_stability(data))

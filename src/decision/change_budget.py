@@ -15,6 +15,18 @@ class ChangeBudget:
     def __init__(self, max_updates_per_minute: int = 10,
                  max_path_changes_per_minute: int = 5,
                  burst_allowance: int = 3):
+        if max_updates_per_minute < 0:
+            raise ValueError("max_updates_per_minute must be >= 0, got %r" % max_updates_per_minute)
+        if max_path_changes_per_minute < 0:
+            raise ValueError("max_path_changes_per_minute must be >= 0, got %r" % max_path_changes_per_minute)
+        if burst_allowance < 0:
+            raise ValueError("burst_allowance must be >= 0, got %r" % burst_allowance)
+        if max_path_changes_per_minute > max_updates_per_minute:
+            raise ValueError(
+                "max_path_changes_per_minute (%r) cannot exceed max_updates_per_minute (%r) -- "
+                "a path change is itself an update"
+                % (max_path_changes_per_minute, max_updates_per_minute)
+            )
         self.max_updates_per_minute = max_updates_per_minute
         self.max_path_changes_per_minute = max_path_changes_per_minute
         self.burst_allowance = burst_allowance

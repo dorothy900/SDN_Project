@@ -206,7 +206,10 @@ class StabilityValidation:
     def _run_priority_policy(self) -> List[Dict[str, object]]:
         """Day 5: high-priority traffic should react earlier than low-priority traffic."""
         policy = TrafficPolicy()
-        trace = [0.68, 0.71, 0.75, 0.79, 0.83, 0.88]
+        # Extended past the old [.68..88] range so File Transfer's tolerance
+        # (qos_threshold=0.25 -> effective threshold 0.95) still gets crossed
+        # within the trace, not just the higher-priority classes'.
+        trace = [0.68, 0.71, 0.75, 0.79, 0.83, 0.88, 0.92, 0.96]
         services = ["VoIP", "Video", "Web", "File Transfer"]
         rows: List[Dict[str, object]] = []
 

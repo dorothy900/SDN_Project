@@ -2,6 +2,12 @@
 """
 Week 2 Complete Verification
 Runs all Day 1-6 checks and produces final verification.
+
+SUPERSEDED: this script's real logic (rate calculation, utilization, history
+window, link status, network-state interface) has been ported into
+experiments/run_network_state_validation.py, which `run_experiment.py
+--stage 2` actually calls. This file still runs and still passes, but is not
+part of the pipeline -- kept for reference, not as the authoritative check.
 """
 import time
 import random

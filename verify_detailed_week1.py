@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
 Week 1 Detailed Verification - Check all acceptance criteria
+
+SUPERSEDED: see experiments/run_topology_validation.py, which
+`run_experiment.py --stage 1` actually calls. This file still runs and still
+passes, but is not part of the pipeline -- kept for reference, not as the
+authoritative check.
 """
 
 import time

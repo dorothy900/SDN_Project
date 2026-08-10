@@ -242,6 +242,7 @@ class ProposedDriver:
         config_path: str = "config/decision.yaml",
         persistence_required_samples: Optional[int] = None,
         initial_path: Optional[List[str]] = None,
+        utilization_threshold: Optional[float] = None,
     ):
         self.state = state
         self.src, self.dst = src, dst
@@ -250,6 +251,15 @@ class ProposedDriver:
             self.engine.persistence_checker.required_samples = persistence_required_samples
             self.engine.persistence_checker.persistence_seconds = 0.0
             self.engine.persistence_checker.cooldown_seconds = 0.0
+        if utilization_threshold is not None:
+            # The "threshold" concept lives in two places that must move
+            # together: the raw violation check (ThresholdDetector) and the
+            # hysteresis enter/release gate (StabilityManager) -- overriding
+            # only one is a no-op, since _evaluate_congestion requires both
+            # a violation AND is_congested() to proceed.
+            self.engine.threshold_detector.thresholds["utilization"] = utilization_threshold
+            self.engine.stability.enter_threshold = utilization_threshold
+            self.engine.stability.release_threshold = max(0.0, utilization_threshold - 0.05)
 
         self.path = list(initial_path) if initial_path else self.engine.path_cost.find_best_path(src, dst)
         pair = (src, dst)
@@ -356,5 +366,6 @@ def make_drivers(
             dst,
             persistence_required_samples=persistence_required_samples,
             initial_path=initial_path,
+            utilization_threshold=threshold,
         ),
     }

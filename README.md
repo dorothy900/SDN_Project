@@ -90,6 +90,20 @@ python3 run_experiment.py --stage full
 python3 run_experiment.py --stage full --scenario congestion
 ```
 
+**`--stage full` runs Experiments A–D only (increasing load, congestion, failure/recovery, stale
+stats).** Experiment E (priority-aware policy) and the parameter sensitivity analysis are separate,
+opt-in runs — the default command above does not include them:
+
+```bash
+# Include Experiment E (priority policy) in the aggregated pilot report
+python3 run_experiment.py --stage 6 --scenario all_plus_priority --repeat 5
+# -> results/pilot/scenario5/, folded into pilot_summary.csv / full_results_repeated.csv
+
+# Parameter sensitivity analysis (why the config/decision.yaml defaults are what they are)
+python3 -m experiments.run_sensitivity_analysis
+# -> results/pilot/sensitivity/{threshold_persistence_sweep,hold_down_sweep}.csv + sensitivity_report.md
+```
+
 ## Project Structure
 
 ```
@@ -104,7 +118,7 @@ sdn-dissertation/
  │
  ├── config/                        # Configuration
  │   ├── topology.yaml
- │   ├── links.yaml
+ │   ├── links.yaml                 # legacy: duplicates decision.yaml's cost/threshold values, not read by any module
  │   ├── policies.yaml              # Traffic class priorities
  │   └── decision.yaml              # Rerouting parameters
  │
@@ -142,25 +156,38 @@ sdn-dissertation/
  │       ├── recovery_manager.py
  │       └── traffic_policy.py
  │
- ├── experiments/                   # Experiment automation (Stage 6)
+ ├── experiments/                   # Experiment automation (Stages 1-6)
+ │   ├── run_topology_validation.py       # Stage 1
+ │   ├── run_network_state_validation.py  # Stage 2
+ │   ├── run_baseline_comparison.py       # Stage 3
+ │   ├── run_decision_engine_validation.py # Stage 4
+ │   ├── run_stability_validation.py      # Stage 5
+ │   ├── run_pilot_experiments.py         # Stage 6 orchestrator
+ │   ├── run_sensitivity_analysis.py      # parameter sweeps, opt-in (see Quick Start)
+ │   ├── simulation_common.py             # shared static/dynamic/proposed harness for Stage 6
  │   ├── traffic_generator.py
- │   ├── scenario_increasing_load.py
- │   ├── scenario_congestion.py
- │   ├── scenario_failure_recovery.py
- │   ├── scenario_stale_stats.py
- │   └── run_baseline_comparison.py
+ │   ├── scenario_increasing_load.py      # Experiment A
+ │   ├── scenario_congestion.py           # Experiment B
+ │   ├── scenario_failure_recovery.py     # Experiment C
+ │   ├── scenario_stale_stats.py          # Experiment D
+ │   └── scenario_priority_policy.py      # Experiment E, opt-in (see Quick Start)
  │
- ├── evaluation/                    # Result analysis
+ ├── evaluation/                    # Result analysis ("analysis" -- there is no src/analysis/)
  │   ├── parse_results.py
  │   └── calculate_metrics.py
  │
- ├── tests/                         # Unit tests
+ ├── tests/                         # Unit + integration tests (pytest tests/ -v)
  │   ├── test_statistics_collector.py
  │   ├── test_threshold_detector.py
  │   ├── test_persistence_checker.py
  │   ├── test_path_cost.py
  │   ├── test_change_budget.py
- │   └── test_stability_manager.py
+ │   ├── test_stability_manager.py
+ │   ├── test_decision_engine.py
+ │   ├── test_calculate_metrics.py
+ │   └── test_stage2_integration.py .. test_stage6_integration.py
+ │
+ ├── verify_week1.py, verify_week2.py, verify_detailed_week1.py  # superseded, see note below
  │
  ├── run_experiment.py              # Main entry point
  │
@@ -227,3 +254,14 @@ pytest tests/test_threshold_detector.py -v
 2. Local Link Congestion
 3. Link Failure & Recovery
 4. Stale Statistics
+5. Priority-Aware Traffic Policy (opt-in, `--scenario all_plus_priority` — see Quick Start)
+
+## Legacy scripts
+
+`verify_week1.py`, `verify_week2.py`, and `verify_detailed_week1.py` are standalone scripts from
+early development. Their real logic (topology loading, rate calculation, history window, link
+status, network-state interface) has since been ported into
+`experiments/run_topology_validation.py` and `experiments/run_network_state_validation.py`, which
+`run_experiment.py --stage 1` / `--stage 2` actually call. The `verify_*.py` scripts still run and
+still pass, but they are not part of the pipeline — treat `experiments/run_*.py` + `pytest tests/`
+as the authoritative path, not these.

@@ -40,15 +40,13 @@ class TrafficPolicy:
         """
         Translate class priority into an effective trigger threshold.
 
-        Higher-priority traffic reacts earlier, while low-priority traffic tolerates
-        more degradation before rerouting.
+        qos_threshold (config/policies.yaml) is each class's tolerance: how far above
+        the base operating threshold utilization must rise before this class cares.
+        Low tolerance (high priority) reacts close to the base threshold; high
+        tolerance (low priority) waits for more sustained degradation.
         """
-        priority = self.get_priority_level(service_type)
-        if priority == 1:
-            return base_threshold
-        if priority == 2:
-            return min(0.95, base_threshold + 0.08)
-        return min(0.95, base_threshold + 0.16)
+        tolerance = float(self.get_class_config(service_type).get("qos_threshold", 0.25))
+        return min(0.95, base_threshold + tolerance)
 
     def evaluate_service(self, service_type: str, utilization: float, base_threshold: float = 0.7) -> Dict[str, object]:
         """Return an interpretable decision record for one class on one sample."""

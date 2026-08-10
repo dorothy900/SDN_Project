@@ -2,7 +2,10 @@
 
 ## Summary
 
-**Overall Status: ✅ 100% ALIGNED WITH REQUIREMENTS**
+**Overall Status: ✅ Weeks 1–6 implemented and passing (35/35 tests), structurally aligned with
+requirements.** This banner originally read "100% ALIGNED" when Weeks 3–6 were still placeholders
+(2026-07); see §"Final Verdict" at the bottom and `results/reports/experiment_validation_report.md`
+for what that claim didn't cover at the time and what's been verified against actual code since.
 
 ---
 
@@ -164,14 +167,23 @@ sdn-dissertation/
 ## 4. Week-by-Week Task Verification
 
 ### Week 1: System Validation ✅ 100% Done
-- [x] Topology verification
+- [x] Topology verification — `run_experiment.py --stage 1` now actually loads
+      `data/Geant2012.graphml` and computes node/link counts, connectivity, diameter, and average
+      degree (previously `stage1()` just printed and wrote hardcoded strings; fixed 2026-08-09 via
+      `experiments/run_topology_validation.py`, reusing the real logic that already existed in
+      `verify_week1.py` but was never wired into the main entry point)
 - [x] Connected nodes check
 - [x] Alternative paths
 - [x] Monitor module separation
 - [x] Statistics model format
 - [x] Integration complete
 
-### Week 2: Network State ✅ 100% Done
+### Week 2: Network State ✅ 100% Done — `run_experiment.py --stage 2` now actually runs
+`experiments/run_network_state_validation.py` (rate calc, utilization, history window, link status,
+`get_network_state()` interface, integration report) and produces every file
+`README.md` promises, including `rate_validation.csv` which `stage2()` previously never generated at
+all (it was a no-op — three `print()` lines and nothing else; fixed 2026-08-09, reusing the real
+logic that already existed in `verify_week2.py`).
 - [x] Real-time rate calculation
 - [x] Link utilization mapping
 - [x] Rolling history window
@@ -242,10 +254,12 @@ sdn-dissertation/
 | Traffic Classes | ✅ Exact | High/Medium/Low as specified |
 | Scenarios | ✅ Exact | 4 scenarios + baseline |
 | Stability Mechanisms | ✅ Exact | All 5 mechanisms configured |
+| Parameter justification | ⚠️ Now measured, not optimal | Every threshold in `decision.yaml` was a fixed value set once at the first commit with no tuning process. Added `experiments/run_sensitivity_analysis.py` (real sweeps against `DecisionEngine`/`StabilityManager`) so the reaction-latency-vs-churn trade-off is measured, not asserted — see `results/reports/experiment_validation_report.md` §12. This does not claim the defaults are optimal, only that their cost is now known. |
 | Cost Function | ✅ Exact | α-β-γ-δ-ε weights set |
 | Baselines | ✅ Exact | Static + Dynamic |
 | Metrics | ✅ Exact | All required |
-| Project Structure | ✅ Perfect | Exact match to requirements |
+| Project Structure | ✅ Cleaned up | `src/analysis/` and `src/traffic/` were empty scaffolding directories from the original 2026-07-18 skeleton, never populated (no `__init__.py`, nothing ever imported from them) — removed. The functionality those names implied already lives elsewhere: "traffic" in `experiments/traffic_generator.py` + `src/stability/traffic_policy.py`; "analysis" in the top-level `evaluation/` package. |
+| Test coverage | ✅ Closed two gaps | Added `tests/test_decision_engine.py` (7 tests) and `tests/test_calculate_metrics.py` (9 tests) — `DecisionEngine` and `evaluation/` were previously only exercised indirectly through full pipeline runs, with no dedicated, fast, isolated unit tests despite every sibling module (`change_budget`, `path_cost`, `persistence_checker`, `stability_manager`) having one. 35/35 tests now passing. |
 
 ---
 

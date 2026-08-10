@@ -35,6 +35,17 @@ class ThresholdDetector:
         if thresholds:
             self.thresholds.update(thresholds)
 
+        # Only the keys this detector actually interprets as a fraction/positive
+        # duration are validated -- config may carry other keys (e.g. decision.yaml's
+        # consecutive_violations) that belong to a different consumer.
+        for fraction_key in ("utilization", "loss_rate"):
+            value = self.thresholds.get(fraction_key)
+            if value is not None and not (0.0 <= float(value) <= 1.0):
+                raise ValueError("%s threshold must be in [0.0, 1.0], got %r" % (fraction_key, value))
+        delay_ms = self.thresholds.get("delay_ms")
+        if delay_ms is not None and float(delay_ms) <= 0.0:
+            raise ValueError("delay_ms threshold must be > 0, got %r" % delay_ms)
+
     def check_utilization(self, link_id: str, utilization: float) -> Optional[ThresholdViolation]:
         """Return a violation once utilization exceeds the configured threshold."""
         threshold = float(self.thresholds["utilization"])

@@ -14,8 +14,10 @@ from pathlib import Path
 
 from experiments.run_baseline_comparison import BaselineComparison
 from experiments.run_decision_engine_validation import DecisionEngineValidation
+from experiments.run_network_state_validation import NetworkStateValidation
 from experiments.run_pilot_experiments import PilotExperimentRunner
 from experiments.run_stability_validation import StabilityValidation
+from experiments.run_topology_validation import TopologyValidation
 
 
 def main():
@@ -73,19 +75,19 @@ def main():
 
 def stage1():
     """Stage 1: Environment & Topology"""
-    print("  - Loading Geant2012 topology")
-    print("  - Topology verification complete (40 nodes, 61 links)")
-
-    output_file = Path("results/stage1/topology_validation.txt")
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    output_file.write_text("Geant2012: 40 nodes, 61 links, connected\n")
+    print("  - Loading Geant2012 topology from data/Geant2012.graphml")
+    print("  - Generating Stage 1 deliverables")
+    summary = TopologyValidation(output_dir=Path("results/stage1")).run()
+    print("  - Verified: %d nodes, %d links, connected=%s" % (
+        summary["node_count"], summary["edge_count"], summary["connected"],
+    ))
 
 
 def stage2():
     """Stage 2: Traffic Monitoring"""
-    print("  - Traffic monitor initialized")
-    print("  - Rate calculation active")
-    print("  - History window recording")
+    print("  - Rate calculation, utilization, history window, link status")
+    print("  - Generating Stage 2 deliverables")
+    NetworkStateValidation(output_dir=Path("results/stage2")).run()
 
 
 def stage3():

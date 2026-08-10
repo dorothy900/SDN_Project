@@ -2,6 +2,12 @@
 """
 Week 1 Verification - System Validation
 Check all Week 1 tasks completed and produce results
+
+SUPERSEDED: this script's real logic (topology loading, node/link counts,
+connectivity, diameter) has been ported into
+experiments/run_topology_validation.py, which `run_experiment.py --stage 1`
+actually calls. This file still runs and still passes, but is not part of
+the pipeline -- kept for reference, not as the authoritative check.
 """
 
 import time

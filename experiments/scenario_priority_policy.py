@@ -33,9 +33,10 @@ from .simulation_common import (
 from .traffic_generator import FlowDefinition
 
 # A monotonic ramp into sustained overload, then relief -- long enough that
-# even File Transfer's high effective threshold (base + 0.16) is eventually
-# crossed and persistence (3 samples) can be satisfied for every class.
-UTILIZATION_TRACE = [0.68, 0.71, 0.75, 0.79, 0.83, 0.88, 0.88, 0.88, 0.88, 0.35, 0.35, 0.35, 0.35]
+# even File Transfer's high effective threshold (base 0.70 + its qos_threshold
+# tolerance of 0.25 = 0.95) is eventually crossed for 3 consecutive samples,
+# satisfying persistence, same as every other class.
+UTILIZATION_TRACE = [0.68, 0.71, 0.75, 0.79, 0.83, 0.88, 0.92, 0.96, 0.97, 0.98, 0.35, 0.35, 0.35, 0.35]
 PERSISTENCE_REQUIRED_SAMPLES = 3
 
 

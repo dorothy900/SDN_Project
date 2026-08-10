@@ -18,6 +18,19 @@ class StabilityManager:
         enter_threshold: float = 0.7,
         release_threshold: float = 0.65,
     ):
+        if hold_down_seconds < 0:
+            raise ValueError("hold_down_seconds must be >= 0, got %r" % hold_down_seconds)
+        if not (0.0 <= enter_threshold <= 1.0):
+            raise ValueError("enter_threshold must be in [0.0, 1.0], got %r" % enter_threshold)
+        if not (0.0 <= release_threshold <= 1.0):
+            raise ValueError("release_threshold must be in [0.0, 1.0], got %r" % release_threshold)
+        if release_threshold > enter_threshold:
+            raise ValueError(
+                "release_threshold (%r) must be <= enter_threshold (%r) -- otherwise a link can "
+                "release from the congested state at a utilization still above enter_threshold, "
+                "flapping instead of the damping hysteresis is meant to provide"
+                % (release_threshold, enter_threshold)
+            )
         self.hold_down_seconds = hold_down_seconds
         self.enter_threshold = enter_threshold
         self.release_threshold = release_threshold
