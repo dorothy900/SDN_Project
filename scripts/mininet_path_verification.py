@@ -4,13 +4,22 @@ Mininet Path Verification - push genuinely valid OpenFlow rules for a
 multi-hop path to a live Mininet/OVS network and confirm traffic actually
 follows it.
 
-Deliberately minimal: a 3-switch linear chain (h1-s1-s2-s3-h2), not the full
-40-switch GeantTopology. An earlier attempt using the full GEANT topology
-took 15+ minutes to bring up all 40 OVS switches and drove system load
-average past 10-15, matching the pattern that previously forced a reboot.
-This script tests the exact same mechanism (real ofport lookup, valid
-OpenFlow13 match/action syntax, no-controller direct rule push) at a scale
-that's safe to run repeatedly.
+Builds the project's actual full 40-switch GeantTopology (topology.py) and
+pushes rules for one real GraphBuilder-computed path across it.
+
+History: an earlier attempt at this full topology (with failMode=standalone)
+took 15+ minutes to bring up and drove system load past 10-15, matching the
+pattern that once forced a reboot. Root cause turned out to be a broadcast
+storm, not raw scale: GEANT is cyclic (61 edges over 40 nodes, well above the
+39 a loop-free tree would have), and standalone's implicit table-miss action
+("NORMAL") is a plain L2-learning fallback with no loop prevention -- on a
+cyclic topology, any unmatched/broadcast packet floods forever and
+self-multiplies (confirmed on a smaller 10-node cyclic subgraph: one
+switch's NORMAL rule hit 16 million packets in ~2 minutes). Switching to
+failMode=secure fixed it there (0% packet loss, ~8s total) -- secure drops
+unmatched traffic by default instead of flooding it, which also matches this
+project's actual design (no reliance on switch auto-learning, only explicit
+pushed rules). This is the same fix applied here, now at full scale.
 
 Note: FlowInstaller's build_flow_rules() output is NOT used here. Its
 "command" strings (e.g. "ovs-ofctl add-flow s13 priority=100,h13->h38,
@@ -35,27 +44,19 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from mininet.net import Mininet
 from mininet.node import OVSSwitch
-from mininet.topo import Topo
 from mininet.log import setLogLevel
 
-OF_VERSION = "OpenFlow13"  # must match protocols= passed to addSwitch below
+from topology import GeantTopology
+from src.routing.graph_builder import GraphBuilder
+from src.monitor.network_state import NetworkState
 
+OF_VERSION = "OpenFlow13"  # must match protocols= passed in topology.py's addSwitch
 
-class ChainTopo(Topo):
-    """h1 - s1 - s2 - s3 - h2: minimal multi-hop chain for a real OVS check."""
-
-    def build(self):
-        switches = [self.addSwitch(f"s{i}", protocols=OF_VERSION) for i in (1, 2, 3)]
-        h1 = self.addHost("h1", ip="10.0.0.1/24")
-        h2 = self.addHost("h2", ip="10.0.0.2/24")
-        self.addLink(h1, switches[0])
-        self.addLink(switches[0], switches[1])
-        self.addLink(switches[1], switches[2])
-        self.addLink(switches[2], h2)
-
-
-# The path as a list of switch names between the two test hosts.
-PATH = ["s1", "s2", "s3"]
+# Same primary pair used throughout the offline experiments in this project
+# (flow-video-1's own h3->h8, GEANT nodes "2"->"7"), so this real-network
+# check is directly comparable to what the simulation already validated.
+SRC_NODE = "2"
+DST_NODE = "7"
 
 
 def get_ofport(switch, neighbor, net) -> str:
@@ -72,17 +73,35 @@ def get_ofport(switch, neighbor, net) -> str:
 
 def main() -> None:
     setLogLevel("info")
+    # Redirected-to-file stdout is block-buffered by default, which can make
+    # a killed/timed-out run look "stuck" at whatever Mininet's own (flushed)
+    # log last printed, even if this script's own prints already ran past it.
+    sys.stdout.reconfigure(line_buffering=True)
 
-    net = Mininet(topo=ChainTopo(), switch=lambda name, **kw: OVSSwitch(name, failMode="standalone", **kw), controller=None)
+    topo = GeantTopology()
+    # secure (not standalone): GEANT is cyclic (61 edges over 40 nodes), and
+    # standalone's implicit "NORMAL" table-miss action is a plain L2-learning
+    # fallback with no loop prevention -- on a cyclic topology that means any
+    # unmatched/broadcast packet floods forever and self-multiplies (confirmed
+    # on a smaller cyclic subgraph: one switch's NORMAL rule hit 16 million
+    # packets in ~2 minutes). secure mode drops unmatched traffic by default
+    # instead, which also fits this project's actual design (no reliance on
+    # switch auto-learning, only explicit pushed rules). ARP is unaffected
+    # since both test hosts get static ARP entries below.
+    net = Mininet(topo=topo, switch=lambda name, **kw: OVSSwitch(name, failMode="secure", **kw), controller=None)
 
     try:
         net.start()
         print("*** Network up:", len(net.switches), "switches,", len(net.hosts), "hosts")
 
-        path = PATH
-        print("*** Path under test:", path)
+        state = NetworkState(output_dir=PROJECT_ROOT / "results" / "mininet_check")
+        builder = GraphBuilder(state)
+        path_nodes = builder.get_candidate_paths(SRC_NODE, DST_NODE, max_paths=1)[0]
+        path = [topo.node_mapping[n][0] for n in path_nodes]
+        print("*** Path under test (real GEANT nodes):", path_nodes, "->", path)
 
-        src_host_name, dst_host_name = "h1", "h2"
+        src_host_name = topo.node_mapping[path_nodes[0]][1]
+        dst_host_name = topo.node_mapping[path_nodes[-1]][1]
         src_host = net.get(src_host_name)
         dst_host = net.get(dst_host_name)
         src_ip, dst_ip = src_host.IP(), dst_host.IP()
