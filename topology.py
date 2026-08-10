@@ -50,3 +50,8 @@ class GeantTopology(Topo):
 
     def get_host_names(self):
         return [h for _, h in self.node_mapping.values()]
+
+
+# Registers this topology with Mininet's --custom loader, e.g.:
+#   sudo mn --custom topology.py --topo geant --controller none --test pingall
+topos = {"geant": GeantTopology}

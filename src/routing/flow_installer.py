@@ -5,14 +5,26 @@ Flow Installer - Build and verify bidirectional OpenFlow-style rules.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 
 class FlowInstaller:
     """Create deterministic, testable OpenFlow-like rules for a selected path."""
 
-    def __init__(self):
+    def __init__(self, node_mapping: Optional[Dict[str, Tuple[str, str]]] = None):
+        """
+        node_mapping: real graph-node-id -> (switch_name, host_name), e.g. from
+        topology.py's GeantTopology.node_mapping. Without it, names are guessed
+        as f"s{int(node)+1}"/f"h{int(node)+1}" -- harmless for the offline
+        simulation (names are never checked against anything real there), but
+        WRONG against a real Mininet deployment: topology.py actually assigns
+        switch/host numbers by sorted *string* order, not node-id+1, and the
+        two only coincide for single-digit node ids (confirmed: 38/40 GEANT
+        nodes mismatch). Always pass the real mapping when driving a live
+        Mininet network.
+        """
         self.installed_rules: Dict[str, List[str]] = {}
+        self.node_mapping = node_mapping
 
     def build_flow_rules(self, path: List[str]) -> List[Dict[str, str]]:
         """
@@ -112,15 +124,17 @@ class FlowInstaller:
 
         self.installed_rules = after_installed or before_installed
 
-    @staticmethod
-    def _switch_name(node: str) -> str:
+    def _switch_name(self, node: str) -> str:
+        if self.node_mapping is not None and str(node) in self.node_mapping:
+            return self.node_mapping[str(node)][0]
         try:
             return f"s{int(str(node)) + 1}"
         except ValueError:
             return str(node)
 
-    @staticmethod
-    def _host_name(node: str) -> str:
+    def _host_name(self, node: str) -> str:
+        if self.node_mapping is not None and str(node) in self.node_mapping:
+            return self.node_mapping[str(node)][1]
         try:
             return f"h{int(str(node)) + 1}"
         except ValueError:
