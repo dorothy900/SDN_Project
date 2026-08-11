@@ -179,19 +179,20 @@ sdn-dissertation/
  │   └── calculate_metrics.py
  │
  ├── tests/                         # Unit + integration tests (pytest tests/ -v)
- │   ├── test_statistics_collector.py
- │   ├── test_threshold_detector.py
- │   ├── test_persistence_checker.py
- │   ├── test_path_cost.py
- │   ├── test_change_budget.py
- │   ├── test_stability_manager.py
- │   ├── test_decision_engine.py
- │   ├── test_calculate_metrics.py
- │   ├── test_network_state_integration.py
- │   ├── test_baseline_comparison_integration.py
- │   ├── test_decision_engine_integration.py
- │   ├── test_stability_integration.py
- │   └── test_pilot_integration.py
+ │   ├── statisticsCollector.py
+ │   ├── thresholdDetector.py
+ │   ├── persistenceChecker.py
+ │   ├── pathCost.py
+ │   ├── changeBudget.py
+ │   ├── stabilityManager.py
+ │   ├── decisionEngine.py
+ │   ├── calculateMetrics.py
+ │   ├── flowInstaller.py
+ │   ├── networkStateIntegration.py
+ │   ├── baselineComparisonIntegration.py
+ │   ├── decisionEngineIntegration.py
+ │   ├── stabilityIntegration.py
+ │   └── pilotIntegration.py
  │
  ├── archive/                       # superseded scripts, see note below
  │   ├── verify_topology_monitor.py
@@ -226,7 +227,7 @@ Run unit tests:
 pytest tests/ -v
 
 # Specific test
-pytest tests/test_threshold_detector.py -v
+pytest tests/thresholdDetector.py -v
 ```
 
 ## Stability Mechanisms

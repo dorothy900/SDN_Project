@@ -80,7 +80,7 @@ path_cost_weights:
 ```
 
 **Formula**: Cost = α·Utilization + β·Delay + γ·Loss + δ·Priority + ε·Reliability  
-**Implementation Location**: [`src/decision/path_cost.py`](file:///home/vboxuser/sdn-project/src/decision/path_cost.py) — implemented and unit-tested (`tests/test_path_cost.py`, `results/decision_engine/path_cost_unit_tests.txt`)
+**Implementation Location**: [`src/decision/path_cost.py`](file:///home/vboxuser/sdn-project/src/decision/path_cost.py) — implemented and unit-tested (`tests/pathCost.py`, `results/decision_engine/path_cost_unit_tests.txt`)
 
 ---
 
@@ -255,7 +255,7 @@ surfaced only once this was actually tried, neither visible from the offline sim
   order of the GEANT graph's node IDs. These coincide only for single-digit node IDs — 38 of 40
   GEANT nodes were wrong. Fixed by adding an optional `node_mapping` parameter (backward-compatible;
   the guess formula remains the default since the offline simulation never checks these names
-  against anything real). Regression-tested in `tests/test_flow_installer.py`.
+  against anything real). Regression-tested in `tests/flowInstaller.py`.
 - **The generated rule strings were never valid OpenFlow syntax.** e.g.
   `ovs-ofctl add-flow s13 priority=100,h13->h38,actions=output:s1` — `h13->h38` isn't a real match
   field, and `output:s1` needs a numeric port, not a switch name. This was always intentional as
@@ -313,7 +313,7 @@ scripts' own docstrings for that distinction).
 | Baselines | ✅ Exact | Static + Dynamic |
 | Metrics | ✅ Exact | All required |
 | Project Structure | ✅ Cleaned up | `src/analysis/` and `src/traffic/` were empty scaffolding directories from the original 2026-07-18 skeleton, never populated (no `__init__.py`, nothing ever imported from them) — removed. The functionality those names implied already lives elsewhere: "traffic" in `experiments/traffic_generator.py` + `src/stability/traffic_policy.py`; "analysis" in the top-level `evaluation/` package. |
-| Test coverage | ✅ Closed three gaps | Added `tests/test_decision_engine.py` (7 tests), `tests/test_calculate_metrics.py` (9 tests), and `tests/test_flow_installer.py` (4 tests, added 2026-08-11 after the real-deployment naming bug in §4a) — `DecisionEngine`, `evaluation/`, and `FlowInstaller` were previously only exercised indirectly, with no dedicated, fast, isolated unit tests despite every sibling module having one. 48/48 tests now passing. |
+| Test coverage | ✅ Closed three gaps | Added `tests/decisionEngine.py` (7 tests), `tests/calculateMetrics.py` (9 tests), and `tests/flowInstaller.py` (4 tests, added 2026-08-11 after the real-deployment naming bug in §4a) — `DecisionEngine`, `evaluation/`, and `FlowInstaller` were previously only exercised indirectly, with no dedicated, fast, isolated unit tests despite every sibling module having one. 48/48 tests now passing. |
 | Real deployment | ✅ Verified 2026-08-11 | Static path push and dynamic failure/recovery both confirmed against a real 40-switch Mininet/OVS network with no controller, 0% packet loss — see §4a. |
 
 ---

@@ -235,12 +235,12 @@ def verify_day6_integration():
     
     # 3. Check tests exist
     test_files = [
-        "tests/test_statistics_collector.py",
-        "tests/test_threshold_detector.py",
-        "tests/test_persistence_checker.py",
-        "tests/test_path_cost.py",
-        "tests/test_change_budget.py",
-        "tests/test_stability_manager.py"
+        "tests/statisticsCollector.py",
+        "tests/thresholdDetector.py",
+        "tests/persistenceChecker.py",
+        "tests/pathCost.py",
+        "tests/changeBudget.py",
+        "tests/stabilityManager.py"
     ]
     
     print("\n  Test files:")
