@@ -47,7 +47,7 @@ what's been verified against actual code since.
 | Local Link Congestion | `scenario_congestion.py` | ✅ Exists as planned |
 | Link Failure & Recovery | `scenario_failure_recovery.py` | ✅ Exists as planned |
 | (Stale Stats) | `scenario_stale_stats.py` | ✅ Exists as planned |
-| Baseline Comparison | `run_baseline_comparison.py` | ✅ Exists as planned |
+| Baseline Comparison | `baseline_comparison.py` | ✅ Exists as planned |
 
 ---
 
@@ -172,7 +172,7 @@ sdn-dissertation/
 - [x] Topology verification — `run_experiment.py --stage 1` now actually loads
       `data/Geant2012.graphml` and computes node/link counts, connectivity, diameter, and average
       degree (previously `stage1()` just printed and wrote hardcoded strings; fixed 2026-08-09 via
-      `experiments/run_topology_validation.py`, reusing the real logic that already existed in
+      `experiments/topology_validation.py`, reusing the real logic that already existed in
       `archive/verify_topology_monitor.py` (renamed 2026-08-11, formerly `verify_week1.py`) but
       was never wired into the main entry point)
 - [x] Connected nodes check
@@ -182,7 +182,7 @@ sdn-dissertation/
 - [x] Integration complete
 
 ### Week 2: Network State ✅ 100% Done — `run_experiment.py --stage 2` now actually runs
-`experiments/run_network_state_validation.py` (rate calc, utilization, history window, link status,
+`experiments/network_state_validation.py` (rate calc, utilization, history window, link status,
 `get_network_state()` interface, integration report) and produces every file
 `README.md` promises, including `rate_validation.csv` which `stage2()` previously never generated at
 all (it was a no-op — three `print()` lines and nothing else; fixed 2026-08-09, reusing the real
@@ -308,7 +308,7 @@ scripts' own docstrings for that distinction).
 | Traffic Classes | ✅ Exact | High/Medium/Low as specified |
 | Scenarios | ✅ Exact | 4 scenarios + baseline |
 | Stability Mechanisms | ✅ Exact | All 5 mechanisms configured |
-| Parameter justification | ⚠️ Now measured, not optimal | Every threshold in `decision.yaml` was a fixed value set once at the first commit with no tuning process. Added `experiments/run_sensitivity_analysis.py` (real sweeps against `DecisionEngine`/`StabilityManager`) so the reaction-latency-vs-churn trade-off is measured, not asserted — see `results/reports/experiment_validation_report.md` §12. This does not claim the defaults are optimal, only that their cost is now known. |
+| Parameter justification | ⚠️ Now measured, not optimal | Every threshold in `decision.yaml` was a fixed value set once at the first commit with no tuning process. Added `experiments/sensitivity_analysis.py` (real sweeps against `DecisionEngine`/`StabilityManager`) so the reaction-latency-vs-churn trade-off is measured, not asserted — see `results/reports/experiment_validation_report.md` §12. This does not claim the defaults are optimal, only that their cost is now known. |
 | Cost Function | ✅ Exact | α-β-γ-δ-ε weights set |
 | Baselines | ✅ Exact | Static + Dynamic |
 | Metrics | ✅ Exact | All required |

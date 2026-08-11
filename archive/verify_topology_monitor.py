@@ -6,7 +6,7 @@ models, and integration.
 
 SUPERSEDED: this script's real logic (topology loading, node/link counts,
 connectivity, diameter) has been ported into
-experiments/run_topology_validation.py, which `run_experiment.py --stage 1`
+experiments/topology_validation.py, which `run_experiment.py --stage 1`
 actually calls. This file still runs and still passes, but is not part of
 the pipeline -- kept in archive/ for reference, not as the authoritative check.
 """

@@ -5,7 +5,7 @@ Topology & Monitor Acceptance Criteria Checklist
 acceptance criterion individually: connectivity, topology structure, monitor
 module separation, statistics data format.
 
-SUPERSEDED: see experiments/run_topology_validation.py, which
+SUPERSEDED: see experiments/topology_validation.py, which
 `run_experiment.py --stage 1` actually calls. This file still runs and still
 passes, but is not part of the pipeline -- kept in archive/ for reference,
 not as the authoritative check.

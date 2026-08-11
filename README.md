@@ -100,7 +100,7 @@ python3 run_experiment.py --stage 6 --scenario all_plus_priority --repeat 5
 # -> results/pilot/scenario5/, folded into pilot_summary.csv / full_results_repeated.csv
 
 # Parameter sensitivity analysis (why the config/decision.yaml defaults are what they are)
-python3 -m experiments.run_sensitivity_analysis
+python3 -m experiments.sensitivity_analysis
 # -> results/pilot/sensitivity/{threshold_persistence_sweep,hold_down_sweep}.csv + sensitivity_report.md
 ```
 
@@ -159,13 +159,13 @@ sdn-dissertation/
  │       └── traffic_policy.py
  │
  ├── experiments/                   # Experiment automation (Stages 1-6)
- │   ├── run_topology_validation.py       # Stage 1
- │   ├── run_network_state_validation.py  # Stage 2
- │   ├── run_baseline_comparison.py       # Stage 3
- │   ├── run_decision_engine_validation.py # Stage 4
- │   ├── run_stability_validation.py      # Stage 5
- │   ├── run_pilot_experiments.py         # Stage 6 orchestrator
- │   ├── run_sensitivity_analysis.py      # parameter sweeps, opt-in (see Quick Start)
+ │   ├── topology_validation.py           # Stage 1
+ │   ├── network_state_validation.py      # Stage 2
+ │   ├── baseline_comparison.py           # Stage 3
+ │   ├── decision_engine_validation.py    # Stage 4
+ │   ├── stability_validation.py          # Stage 5
+ │   ├── pilot_experiments.py             # Stage 6 orchestrator
+ │   ├── sensitivity_analysis.py          # parameter sweeps, opt-in (see Quick Start)
  │   ├── simulation_common.py             # shared static/dynamic/proposed harness for Stage 6
  │   ├── traffic_generator.py
  │   ├── scenario_increasing_load.py      # Experiment A
@@ -267,7 +267,7 @@ pytest tests/test_threshold_detector.py -v
 and `archive/verify_network_state.py` are standalone scripts from early development (originally
 named `verify_week1.py` / `verify_detailed_week1.py` / `verify_week2.py`). Their real logic
 (topology loading, rate calculation, history window, link status, network-state interface) has
-since been ported into `experiments/run_topology_validation.py` and
-`experiments/run_network_state_validation.py`, which `run_experiment.py --stage 1` / `--stage 2`
+since been ported into `experiments/topology_validation.py` and
+`experiments/network_state_validation.py`, which `run_experiment.py --stage 1` / `--stage 2`
 actually call. The `archive/` scripts still run and still pass, but they are not part of the
-pipeline — treat `experiments/run_*.py` + `pytest tests/` as the authoritative path, not these.
+pipeline — treat `experiments/*.py` + `pytest tests/` as the authoritative path, not these.

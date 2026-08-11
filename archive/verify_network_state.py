@@ -6,7 +6,7 @@ detection, and the get_network_state() interface.
 
 SUPERSEDED: this script's real logic (rate calculation, utilization, history
 window, link status, network-state interface) has been ported into
-experiments/run_network_state_validation.py, which `run_experiment.py
+experiments/network_state_validation.py, which `run_experiment.py
 --stage 2` actually calls. This file still runs and still passes, but is not
 part of the pipeline -- kept in archive/ for reference, not as the
 authoritative check.
