@@ -20,7 +20,7 @@ from .models import PortStatistics, LinkStatistics
 class StatisticsCollector:
     """Collect port statistics from OVS using ovs-ofctl."""
 
-    def __init__(self, output_dir: Path = Path("results/stage2"), config_path: str = "config/topology.yaml"):
+    def __init__(self, output_dir: Path = Path("results/network_state"), config_path: str = "config/topology.yaml"):
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.previous_stats: Dict[Tuple[str, int], Tuple[float, int, int]] = {}

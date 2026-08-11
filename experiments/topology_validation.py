@@ -26,7 +26,7 @@ class TopologyValidation:
     """Run Week 1 Day 1-2 checks and persist Stage 1 deliverables."""
 
     def __init__(self, output_dir: Optional[Path] = None, graphml_path: str = "data/Geant2012.graphml"):
-        self.output_dir = output_dir or Path("results/stage1")
+        self.output_dir = output_dir or Path("results/topology")
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.graphml_path = Path(graphml_path)
 
@@ -97,7 +97,7 @@ class TopologyValidation:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Week 1 topology validation runner")
-    parser.add_argument("--output-dir", type=str, default="results/stage1")
+    parser.add_argument("--output-dir", type=str, default="results/topology")
     parser.add_argument("--graphml-path", type=str, default="data/Geant2012.graphml")
     args = parser.parse_args()
 

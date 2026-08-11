@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from experiments.pilot_experiments import PilotExperimentRunner
 
 
-def test_stage6_integration() -> None:
+def test_pilot_integration() -> None:
     """Run the Week 6 pilot pipeline and verify all deliverables."""
     output_dir = Path("results/pilot")
     runner = PilotExperimentRunner(output_dir=output_dir)
@@ -75,4 +75,4 @@ def test_stage6_integration() -> None:
 
 
 if __name__ == "__main__":
-    test_stage6_integration()
+    test_pilot_integration()

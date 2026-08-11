@@ -99,7 +99,7 @@ class LinkHistory:
 class HistoryStore:
     """Store historical network state data across all links."""
 
-    def __init__(self, window_size: int = 60, output_dir: Path = Path("results/stage2")):
+    def __init__(self, window_size: int = 60, output_dir: Path = Path("results/network_state")):
         self.window_size = window_size
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)

@@ -36,7 +36,7 @@ class LinkMonitor:
     Detects link up/down events.
     """
 
-    def __init__(self, output_dir: Path = Path("results/stage2")):
+    def __init__(self, output_dir: Path = Path("results/network_state")):
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
         

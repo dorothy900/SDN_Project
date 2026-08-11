@@ -45,7 +45,7 @@ class BaselineComparison:
     """Run static and dynamic baseline experiments end-to-end."""
 
     def __init__(self, output_dir: Optional[Path] = None, threshold: float = 0.7):
-        self.output_dir = output_dir or Path("results/stage3")
+        self.output_dir = output_dir or Path("results/baseline_comparison")
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.threshold = threshold
 
@@ -390,7 +390,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="results/stage3",
+        default="results/baseline_comparison",
         help="Directory to store Week 3 outputs",
     )
     args = parser.parse_args()

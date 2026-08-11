@@ -31,7 +31,7 @@ def verify_day1_rate_calculation():
     print("Day 1: Rate Calculation Verification")
     print("=" * 70)
     
-    collector = StatisticsCollector(output_dir=Path("results/stage2"))
+    collector = StatisticsCollector(output_dir=Path("results/network_state"))
     
     # Simulate a few samples with real time gaps
     base_time = time.time()
@@ -79,7 +79,7 @@ def verify_day2_link_utilization():
     print("Day 2: Link Utilization Verification")
     print("=" * 70)
     
-    collector = StatisticsCollector(output_dir=Path("results/stage2"))
+    collector = StatisticsCollector(output_dir=Path("results/network_state"))
     mapper = LinkMapper()
     
     # Register a test link
@@ -117,7 +117,7 @@ def verify_day3_history_window():
     print("Day 3: History Window Verification")
     print("=" * 70)
     
-    state = NetworkState(output_dir=Path("results/stage2"), history_window_size=10)
+    state = NetworkState(output_dir=Path("results/network_state"), history_window_size=10)
     base_time = time.time()
     
     # Add multiple samples with increasing utilization
@@ -151,7 +151,7 @@ def verify_day4_link_status():
     print("Day 4: Link Status Detection Verification")
     print("=" * 70)
     
-    state = NetworkState(output_dir=Path("results/stage2"))
+    state = NetworkState(output_dir=Path("results/network_state"))
     ts = datetime.now()
     
     # Create initial stats
@@ -186,7 +186,7 @@ def verify_day5_network_state_interface():
     print("Day 5: Network State Interface Verification")
     print("=" * 70)
     
-    state = NetworkState(output_dir=Path("results/stage2"))
+    state = NetworkState(output_dir=Path("results/network_state"))
     
     # Add some data
     ts = datetime.now()
@@ -222,10 +222,10 @@ def verify_day6_integration():
     
     # Final check of output files
     output_files = [
-        "results/stage2/rate_validation.csv",
-        "results/stage2/history_window_test.csv",
-        "results/stage2/link_status_events.csv",
-        "results/stage2/network_state_snapshot.json",
+        "results/network_state/rate_validation.csv",
+        "results/network_state/history_window_test.csv",
+        "results/network_state/link_status_events.csv",
+        "results/network_state/network_state_snapshot.json",
     ]
     
     for f in output_files:
@@ -242,7 +242,7 @@ def generate_final_report():
     print("Generating Final Week 2 Report")
     print("=" * 70)
     
-    report_path = Path("results/stage2/week2_wrapup_notes.md")
+    report_path = Path("results/network_state/week2_wrapup_notes.md")
     
     with report_path.open("w", encoding="utf-8") as f:
         f.write("# Week 2 Wrap-up Notes\n\n")
@@ -266,7 +266,7 @@ def main():
     print("=" * 70)
     
     # Ensure output dir
-    Path("results/stage2").mkdir(parents=True, exist_ok=True)
+    Path("results/network_state").mkdir(parents=True, exist_ok=True)
     
     results = {
         "Day 1": verify_day1_rate_calculation(),

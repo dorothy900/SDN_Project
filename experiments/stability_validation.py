@@ -33,7 +33,7 @@ class StabilityValidation:
     """Run Week 5 Day 1-6 checks and persist Stage 5 deliverables."""
 
     def __init__(self, output_dir: Optional[Path] = None):
-        self.output_dir = output_dir or Path("results/stage5")
+        self.output_dir = output_dir or Path("results/stability")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def run(self) -> Dict[str, object]:
@@ -350,7 +350,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="results/stage5",
+        default="results/stability",
         help="Directory to store Week 5 outputs",
     )
     args = parser.parse_args()

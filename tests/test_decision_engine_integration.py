@@ -15,9 +15,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from experiments.decision_engine_validation import DecisionEngineValidation
 
 
-def test_stage4_integration() -> None:
+def test_decision_engine_integration() -> None:
     """Run the full Week 4 pipeline and verify all deliverables."""
-    output_dir = Path("results/stage4")
+    output_dir = Path("results/decision_engine")
     runner = DecisionEngineValidation(output_dir=output_dir)
     runner.run()
 
@@ -72,4 +72,4 @@ def test_stage4_integration() -> None:
 
 
 if __name__ == "__main__":
-    test_stage4_integration()
+    test_decision_engine_integration()

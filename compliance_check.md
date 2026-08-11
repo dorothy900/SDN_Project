@@ -80,7 +80,7 @@ path_cost_weights:
 ```
 
 **Formula**: Cost = α·Utilization + β·Delay + γ·Loss + δ·Priority + ε·Reliability  
-**Implementation Location**: [`src/decision/path_cost.py`](file:///home/vboxuser/sdn-project/src/decision/path_cost.py) — implemented and unit-tested (`tests/test_path_cost.py`, `results/stage4/path_cost_unit_tests.txt`)
+**Implementation Location**: [`src/decision/path_cost.py`](file:///home/vboxuser/sdn-project/src/decision/path_cost.py) — implemented and unit-tested (`tests/test_path_cost.py`, `results/decision_engine/path_cost_unit_tests.txt`)
 
 ---
 
@@ -209,7 +209,7 @@ logic that already existed in `archive/verify_network_state.py` (renamed 2026-08
 
 ### Week 5: Stability Control ✅ Done
 - [x] Hysteresis, hold-down, emergency reroute, recovery protection, priority-aware policy
-      (all individually validated in `results/stage5/`)
+      (all individually validated in `results/stability/`)
 - [x] Priority policy is now also wired into `DecisionEngine.evaluate_service_congestion()`
       and exercised end-to-end in Stage 6 (previously validated only in isolation; fixed 2026-08-02)
 

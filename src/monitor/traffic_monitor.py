@@ -18,7 +18,7 @@ class TrafficMonitor:
     def __init__(
         self,
         switch_names: List[str],
-        output_dir: Path = Path("results/stage1"),
+        output_dir: Path = Path("results/topology"),
         interval: int = 2,
         duration: int = 60,
     ):

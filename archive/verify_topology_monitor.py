@@ -51,7 +51,7 @@ def verify_day12_topology():
     print(f"  [OK] Average degree: {avg_degree:.2f}")
     
     # 5. Output results to file
-    output_dir = Path("results/stage1")
+    output_dir = Path("results/topology")
     output_dir.mkdir(exist_ok=True, parents=True)
     
     with open(output_dir / "topology_validation.txt", "w", encoding="utf-8") as f:
@@ -71,7 +71,7 @@ def verify_day12_topology():
                 break
             f.write(f"  {u} <-> {v}\n")
     
-    print("\n  [OK] Results written to: results/stage1/topology_validation.txt")
+    print("\n  [OK] Results written to: results/topology/topology_validation.txt")
     
     return True
 
@@ -127,7 +127,7 @@ def verify_day34_monitor():
         )
         
         collector.save_to_csv([stats], "monitor_test.csv")
-        result_path = Path("results/stage1/monitor_test.csv")
+        result_path = Path("results/topology/monitor_test.csv")
         if result_path.exists():
             print("  [OK] CSV output working")
         
@@ -251,7 +251,7 @@ def verify_day6_integration():
             print(f"    [FAIL] {f}")
     
     # 4. Write integration summary
-    output_dir = Path("results/stage1")
+    output_dir = Path("results/topology")
     with open(output_dir / "week1_integration_report.txt", "w", encoding="utf-8") as f:
         f.write(f"Week 1 Integration Report - {datetime.now().isoformat()}\n")
         f.write("="*70 + "\n\n")
@@ -263,7 +263,7 @@ def verify_day6_integration():
         f.write("  - Configuration files: config/\n")
         f.write("  - Unit tests: tests/\n\n")
     
-    print("  [OK] Integration report written to results/stage1/")
+    print("  [OK] Integration report written to results/topology/")
     
     return all_ok
 
@@ -276,7 +276,7 @@ def generate_final_report(results):
     passed = sum(1 for r in results.values() if r)
     total = len(results)
     
-    output_dir = Path("results/stage1")
+    output_dir = Path("results/topology")
     output_dir.mkdir(exist_ok=True)
     
     report_path = output_dir / "week1_final_report.txt"

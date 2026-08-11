@@ -26,7 +26,7 @@ pip install -r requirements.txt
 python3 run_experiment.py --stage 1
 
 # View results
-cat results/stage1/topology_validation.txt
+cat results/topology/topology_validation.txt
 ```
 
 ### 2. Traffic Monitoring (Stage 2)
@@ -35,7 +35,7 @@ cat results/stage1/topology_validation.txt
 # Run stage 2
 python3 run_experiment.py --stage 2
 
-# Expected outputs in results/stage2/:
+# Expected outputs in results/network_state/:
 #   - rate_validation.csv
 #   - history_window_test.csv
 ```
@@ -54,7 +54,7 @@ current pipeline — see the note at the top of `odl_client.py` for why it's lef
 # Run baseline comparison
 python3 run_experiment.py --stage 3
 
-# Expected outputs in results/stage3/:
+# Expected outputs in results/baseline_comparison/:
 #   - baseline_summary_repeated.csv
 ```
 
@@ -64,7 +64,7 @@ python3 run_experiment.py --stage 3
 # Test stability-aware decisions
 python3 run_experiment.py --stage 4
 
-# Expected outputs in results/stage4/:
+# Expected outputs in results/decision_engine/:
 #   - decision_log.csv
 #   - change_budget_test.csv
 ```
@@ -75,7 +75,7 @@ python3 run_experiment.py --stage 4
 # Test stability mechanisms
 python3 run_experiment.py --stage 5
 
-# Expected outputs in results/stage5/:
+# Expected outputs in results/stability/:
 #   - hysteresis_trace.csv
 #   - priority_policy_test.csv
 ```
@@ -187,7 +187,11 @@ sdn-dissertation/
  │   ├── test_stability_manager.py
  │   ├── test_decision_engine.py
  │   ├── test_calculate_metrics.py
- │   └── test_stage2_integration.py .. test_stage6_integration.py
+ │   ├── test_network_state_integration.py
+ │   ├── test_baseline_comparison_integration.py
+ │   ├── test_decision_engine_integration.py
+ │   ├── test_stability_integration.py
+ │   └── test_pilot_integration.py
  │
  ├── archive/                       # superseded scripts, see note below
  │   ├── verify_topology_monitor.py
@@ -197,11 +201,11 @@ sdn-dissertation/
  ├── run_experiment.py              # Main entry point
  │
  └── results/                       # Output directory
-     ├── stage1/
-     ├── stage2/
-     ├── stage3/
-     ├── stage4/
-     ├── stage5/
+     ├── topology/
+     ├── network_state/
+     ├── baseline_comparison/
+     ├── decision_engine/
+     ├── stability/
      └── pilot/
 ```
 

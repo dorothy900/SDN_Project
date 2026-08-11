@@ -27,7 +27,7 @@ class DecisionRecord:
 class DecisionLogger:
     """Log rerouting decisions for analysis."""
 
-    def __init__(self, log_dir: Path = Path("results/stage4")):
+    def __init__(self, log_dir: Path = Path("results/decision_engine")):
         self.log_dir = log_dir
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.records: List[DecisionRecord] = []

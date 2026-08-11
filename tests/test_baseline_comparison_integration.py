@@ -16,9 +16,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from experiments.baseline_comparison import BaselineComparison
 
 
-def test_stage3_integration() -> None:
+def test_baseline_comparison_integration() -> None:
     """Run the full Week 3 pipeline and verify all deliverables."""
-    output_dir = Path("results/stage3")
+    output_dir = Path("results/baseline_comparison")
     runner = BaselineComparison(output_dir=output_dir)
     runner.run(repeat=3)
 
@@ -77,4 +77,4 @@ def test_stage3_integration() -> None:
 
 
 if __name__ == "__main__":
-    test_stage3_integration()
+    test_baseline_comparison_integration()

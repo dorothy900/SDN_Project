@@ -23,7 +23,7 @@ class NetworkState:
 
     def __init__(
         self,
-        output_dir: Path = Path("results/stage2"),
+        output_dir: Path = Path("results/network_state"),
         history_window_size: int = 60,
     ):
         self.output_dir = output_dir

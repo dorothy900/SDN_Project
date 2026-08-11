@@ -77,7 +77,7 @@ def stage1():
     """Stage 1: Environment & Topology"""
     print("  - Loading Geant2012 topology from data/Geant2012.graphml")
     print("  - Generating Stage 1 deliverables")
-    summary = TopologyValidation(output_dir=Path("results/stage1")).run()
+    summary = TopologyValidation(output_dir=Path("results/topology")).run()
     print("  - Verified: %d nodes, %d links, connected=%s" % (
         summary["node_count"], summary["edge_count"], summary["connected"],
     ))
@@ -87,7 +87,7 @@ def stage2():
     """Stage 2: Traffic Monitoring"""
     print("  - Rate calculation, utilization, history window, link status")
     print("  - Generating Stage 2 deliverables")
-    NetworkStateValidation(output_dir=Path("results/stage2")).run()
+    NetworkStateValidation(output_dir=Path("results/network_state")).run()
 
 
 def stage3():
@@ -95,7 +95,7 @@ def stage3():
     print("  - Static shortest path baseline")
     print("  - Dynamic link-cost baseline")
     print("  - Generating Stage 3 deliverables")
-    BaselineComparison(output_dir=Path("results/stage3")).run(repeat=3)
+    BaselineComparison(output_dir=Path("results/baseline_comparison")).run(repeat=3)
 
 
 def stage4():
@@ -104,7 +104,7 @@ def stage4():
     print("  - Persistence checker active")
     print("  - Change budget operational")
     print("  - Generating Stage 4 deliverables")
-    DecisionEngineValidation(output_dir=Path("results/stage4")).run()
+    DecisionEngineValidation(output_dir=Path("results/decision_engine")).run()
 
 
 def stage5():
@@ -112,7 +112,7 @@ def stage5():
     print("  - Hold-down timer active")
     print("  - Traffic policies loaded")
     print("  - Generating Stage 5 deliverables")
-    StabilityValidation(output_dir=Path("results/stage5")).run()
+    StabilityValidation(output_dir=Path("results/stability")).run()
 
 
 def stage6(scenario, repeat: int = 3):

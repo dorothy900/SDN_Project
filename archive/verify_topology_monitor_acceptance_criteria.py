@@ -46,7 +46,7 @@ def check_day1_connectivity():
         print(f"   ... and {graph.number_of_nodes()-10} more")
     
     # Write output file
-    output = Path("results/stage1/connected_nodes.txt")
+    output = Path("results/topology/connected_nodes.txt")
     with output.open("w", encoding="utf-8") as f:
         f.write("Connected Nodes Verification - Week 1 Day 1\n")
         f.write("="*60 + "\n\n")
@@ -100,7 +100,7 @@ def check_day2_topology():
             print(f"   Note: Path calculation note: {e}")
     
     # Write results
-    output = Path("results/stage1/topology_validation_report.txt")
+    output = Path("results/topology/topology_validation_report.txt")
     with output.open("w", encoding="utf-8") as f:
         f.write("Topology Validation Report - Week 1 Day 2\n")
         f.write("="*60 + "\n\n")
@@ -177,7 +177,7 @@ def check_day34_monitor():
     )
     
     # Write sample CSV
-    csv_path = Path("results/stage1/sample_link_statistics.csv")
+    csv_path = Path("results/topology/sample_link_statistics.csv")
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
@@ -254,7 +254,7 @@ def check_day5_data_format():
     print("   ✓ All links use the same CSV format")
     print("   ✓ Standard field order defined")
     
-    output = Path("results/stage1/sample_link_statistics.csv")
+    output = Path("results/topology/sample_link_statistics.csv")
     if output.exists():
         print(f"\n5. Sample CSV created: {output}")
         with output.open("r", encoding="utf-8") as f:
@@ -272,7 +272,7 @@ def generate_acceptance_report():
     print("FINAL ACCEPTANCE REPORT")
     print("="*70)
     
-    report = Path("results/stage1/week1_acceptance_report.txt")
+    report = Path("results/topology/week1_acceptance_report.txt")
     with report.open("w", encoding="utf-8") as f:
         f.write("="*70 + "\n")
         f.write("WEEK 1 - FULL ACCEPTANCE REPORT\n")
@@ -323,8 +323,8 @@ def generate_acceptance_report():
     print(f"\n✓ Acceptance report written: {report}")
     
     # Show results directory contents
-    print("\nFinal results directory (results/stage1/):")
-    for f in sorted(Path("results/stage1").iterdir()):
+    print("\nFinal results directory (results/topology/):")
+    for f in sorted(Path("results/topology").iterdir()):
         if f.is_file():
             print(f"  ✓ {f.name}")
     

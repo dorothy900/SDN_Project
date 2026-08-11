@@ -13,7 +13,7 @@ from src.monitor.network_state import NetworkState
 from src.monitor.link_mapper import LinkMapper
 
 
-def test_stage2_integration():
+def test_network_state_integration():
     """
     Complete Stage 2 integration test.
     Injects multiple flows, verifies consistency, no missing links.
@@ -23,7 +23,7 @@ def test_stage2_integration():
     print("=" * 70)
     
     # Initialize state
-    output_dir = Path("results/stage2")
+    output_dir = Path("results/network_state")
     output_dir.mkdir(parents=True, exist_ok=True)
     state = NetworkState(output_dir=output_dir)
     
@@ -137,5 +137,5 @@ def test_stage2_integration():
 
 
 if __name__ == "__main__":
-    success = test_stage2_integration()
+    success = test_network_state_integration()
     exit(0 if success else 1)

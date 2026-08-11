@@ -15,9 +15,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from experiments.stability_validation import StabilityValidation
 
 
-def test_stage5_integration() -> None:
+def test_stability_integration() -> None:
     """Run the full Week 5 pipeline and verify all deliverables."""
-    output_dir = Path("results/stage5")
+    output_dir = Path("results/stability")
     runner = StabilityValidation(output_dir=output_dir)
     runner.run()
 
@@ -73,4 +73,4 @@ def test_stage5_integration() -> None:
 
 
 if __name__ == "__main__":
-    test_stage5_integration()
+    test_stability_integration()

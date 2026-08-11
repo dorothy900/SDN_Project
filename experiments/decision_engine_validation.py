@@ -31,7 +31,7 @@ class DecisionEngineValidation:
     """Run Week 4 Day 1-6 checks and persist Stage 4 deliverables."""
 
     def __init__(self, output_dir: Optional[Path] = None):
-        self.output_dir = output_dir or Path("results/stage4")
+        self.output_dir = output_dir or Path("results/decision_engine")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def run(self) -> Dict[str, object]:
@@ -406,7 +406,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="results/stage4",
+        default="results/decision_engine",
         help="Directory to store Week 4 outputs",
     )
     args = parser.parse_args()

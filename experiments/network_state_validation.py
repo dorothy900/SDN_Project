@@ -22,7 +22,7 @@ class NetworkStateValidation:
     """Run Week 2 Day 1-6 checks and persist Stage 2 deliverables."""
 
     def __init__(self, output_dir: Optional[Path] = None):
-        self.output_dir = output_dir or Path("results/stage2")
+        self.output_dir = output_dir or Path("results/network_state")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def run(self) -> Dict[str, object]:
@@ -202,7 +202,7 @@ class NetworkStateValidation:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Week 2 network state validation runner")
-    parser.add_argument("--output-dir", type=str, default="results/stage2")
+    parser.add_argument("--output-dir", type=str, default="results/network_state")
     args = parser.parse_args()
 
     runner = NetworkStateValidation(output_dir=Path(args.output_dir))
