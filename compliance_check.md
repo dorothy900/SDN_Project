@@ -171,10 +171,7 @@ sdn-dissertation/
 - [x] Topology verification — `experiment.py --stage 1` now actually loads
       `data/Geant2012.graphml` and computes node/link counts, connectivity, diameter, and average
       degree (previously `stage1()` just printed and wrote hardcoded strings; fixed 2026-08-09 via
-      `experiments/topology_check.py`, reusing the real logic that originally lived in a
-      standalone `verify_week1.py` script but was never wired into the main entry point; that
-      script, briefly kept as `archive/verify_topology_monitor.py`, was deleted 2026-08-11 as
-      fully redundant once its logic had been ported)
+      `experiments/topology_check.py`, which now owns this logic)
 - [x] Connected nodes check
 - [x] Alternative paths
 - [x] Monitor module separation
@@ -185,10 +182,8 @@ sdn-dissertation/
 `experiments/network_state_check.py` (rate calc, utilization, history window, link status,
 `get_network_state()` interface, integration report) and produces every file
 `README.md` promises, including `rate_validation.csv` which `stage2()` previously never generated at
-all (it was a no-op — three `print()` lines and nothing else; fixed 2026-08-09, reusing the real
-logic that originally lived in a standalone `verify_week2.py` script; that script, briefly kept as
-`archive/verify_network_state.py`, was deleted 2026-08-11 as fully redundant once its logic had
-been ported).
+all (it was a no-op — three `print()` lines and nothing else; fixed 2026-08-09, which now owns
+this logic).
 - [x] Real-time rate calculation
 - [x] Link utilization mapping
 - [x] Rolling history window
