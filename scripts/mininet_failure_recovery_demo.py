@@ -32,6 +32,7 @@ Run as: sudo python3 scripts/mininet_failure_recovery_demo.py
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -66,7 +67,7 @@ def get_ofport(switch, neighbor) -> str:
     return ofport
 
 
-def install_path_rules(net, topo, path_nodes, src_ip, dst_ip) -> None:
+def install_path_rules(net, topo, path_nodes, src_ip, dst_ip, log: list) -> None:
     """Push forward+reverse rules for every switch hop on path_nodes."""
     switch_path = [topo.node_mapping[n][0] for n in path_nodes]
     src_host_name = topo.node_mapping[path_nodes[0]][1]
@@ -92,10 +93,11 @@ def install_path_rules(net, topo, path_nodes, src_ip, dst_ip) -> None:
         )
         for cmd in (forward_cmd, reverse_cmd):
             print("   ", cmd)
+            log.append(cmd)
             switch.cmd(cmd)
 
 
-def clear_path_rules(net, topo, path_nodes, src_ip, dst_ip) -> None:
+def clear_path_rules(net, topo, path_nodes, src_ip, dst_ip, log: list) -> None:
     """Remove the forward+reverse rules this script installed for path_nodes."""
     switch_path = [topo.node_mapping[n][0] for n in path_nodes]
     for switch_name in switch_path:
@@ -103,16 +105,18 @@ def clear_path_rules(net, topo, path_nodes, src_ip, dst_ip) -> None:
         for ip in (src_ip, dst_ip):
             cmd = f"ovs-ofctl -O {OF_VERSION} del-flows {switch_name} dl_type=0x0800,nw_dst={ip}"
             print("   ", cmd)
+            log.append(cmd)
             switch.cmd(cmd)
 
 
-def ping_and_report(src_host, dst_ip, label) -> bool:
+def ping_and_report(src_host, dst_ip, label, log: list) -> bool:
     print(f"*** [{label}] Pinging {src_host.name} -> {dst_ip}")
     result = src_host.cmd(f"ping -c 3 -W 2 {dst_ip}")
     print(result)
     loss_line = [l for l in result.splitlines() if "packet loss" in l]
     success = bool(loss_line) and "0% packet loss" in loss_line[0]
     print(f"*** [{label}] RESULT:", "SUCCESS" if success else "FAILED")
+    log.append(f"### [{label}] ping result\n```\n{result}```\n[{label}] RESULT: {'SUCCESS' if success else 'FAILED'}\n")
     return success
 
 
@@ -122,12 +126,16 @@ def main() -> None:
 
     topo = GeantTopology()
     net = Mininet(topo=topo, switch=lambda name, **kw: OVSSwitch(name, failMode="secure", **kw), controller=None)
+    output_dir = PROJECT_ROOT / "results" / "mininet_failure_demo"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rule_log: list = []
+    ping_log: list = []
 
     try:
         net.start()
         print("*** Network up:", len(net.switches), "switches,", len(net.hosts), "hosts")
 
-        state = NetworkState(output_dir=PROJECT_ROOT / "results" / "mininet_failure_demo")
+        state = NetworkState(output_dir=output_dir)
         builder = GraphBuilder(state)
 
         src_host_name = topo.node_mapping[SRC_NODE][1]
@@ -142,8 +150,8 @@ def main() -> None:
         original_path = builder.get_candidate_paths(SRC_NODE, DST_NODE, max_paths=1)[0]
         print("*** [before] Path (real GEANT nodes):", original_path,
               "->", [topo.node_mapping[n][0] for n in original_path])
-        install_path_rules(net, topo, original_path, src_ip, dst_ip)
-        assert ping_and_report(src_host, dst_ip, "before-failure"), "Baseline path must work before testing failure"
+        install_path_rules(net, topo, original_path, src_ip, dst_ip, rule_log)
+        assert ping_and_report(src_host, dst_ip, "before-failure", ping_log), "Baseline path must work before testing failure"
 
         # --- Phase 2: fail the path's first hop, for real ---
         fail_u, fail_v = original_path[0], original_path[1]
@@ -163,9 +171,9 @@ def main() -> None:
               "->", [topo.node_mapping[n][0] for n in new_path])
         assert new_path != original_path, "Recomputed path should differ once the first hop is excluded"
 
-        clear_path_rules(net, topo, original_path, src_ip, dst_ip)
-        install_path_rules(net, topo, new_path, src_ip, dst_ip)
-        assert ping_and_report(src_host, dst_ip, "after-reroute"), "Traffic must recover on the rerouted path"
+        clear_path_rules(net, topo, original_path, src_ip, dst_ip, rule_log)
+        install_path_rules(net, topo, new_path, src_ip, dst_ip, rule_log)
+        assert ping_and_report(src_host, dst_ip, "after-reroute", ping_log), "Traffic must recover on the rerouted path"
 
         # --- Phase 4: restore the failed link, confirm the graph sees it again ---
         print(f"*** Restoring real link {fail_switch_u}<->{fail_switch_v}")
@@ -174,10 +182,34 @@ def main() -> None:
         recovered_path = builder.get_candidate_paths(SRC_NODE, DST_NODE, max_paths=1)[0]
         print("*** [after-recovery] Recomputed path:", recovered_path,
               "->", [topo.node_mapping[n][0] for n in recovered_path])
-        print("*** Matches original pre-failure path:", recovered_path == original_path)
+        recovered = recovered_path == original_path
+        print("*** Matches original pre-failure path:", recovered)
 
         print("\n*** OVERALL RESULT: SUCCESS - real failure triggered a real reroute, "
               "traffic recovered, and recovery was reflected once the link came back")
+
+        report_path = output_dir / "verification_report.md"
+        report_path.write_text(
+            "# Mininet Failure & Recovery Demo Report\n\n"
+            f"Generated: {datetime.now().isoformat()}\n\n"
+            f"## Network\n{len(net.switches)} switches, {len(net.hosts)} hosts "
+            "(full GeantTopology, failMode=secure, no controller)\n\n"
+            f"## Phase 1: Before Failure\nPath: {original_path} -> "
+            f"{[topo.node_mapping[n][0] for n in original_path]}\n\n"
+            f"## Phase 2: Failed Link\n{fail_switch_u}<->{fail_switch_v} "
+            f"(GEANT nodes {fail_u}<->{fail_v}, the path's first hop)\n\n"
+            f"## Phase 3: Rerouted Path\nPath: {new_path} -> "
+            f"{[topo.node_mapping[n][0] for n in new_path]}\n\n"
+            f"## Phase 4: After Recovery\nRecomputed path: {recovered_path} -> "
+            f"{[topo.node_mapping[n][0] for n in recovered_path]}\n"
+            f"Matches original pre-failure path: {recovered}\n\n"
+            "## Installed/Removed OpenFlow Rules\n```\n" + "\n".join(rule_log) + "\n```\n\n"
+            "## Ping Results\n" + "\n".join(ping_log) + "\n"
+            "## Overall Result\nSUCCESS - real failure triggered a real reroute, traffic "
+            "recovered, and recovery was reflected once the link came back\n",
+            encoding="utf-8",
+        )
+        print(f"*** Report saved: {report_path}")
 
     finally:
         net.stop()

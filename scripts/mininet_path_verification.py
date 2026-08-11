@@ -37,6 +37,7 @@ Run as: sudo python3 scripts/mininet_path_verification.py
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -89,12 +90,15 @@ def main() -> None:
     # switch auto-learning, only explicit pushed rules). ARP is unaffected
     # since both test hosts get static ARP entries below.
     net = Mininet(topo=topo, switch=lambda name, **kw: OVSSwitch(name, failMode="secure", **kw), controller=None)
+    output_dir = PROJECT_ROOT / "results" / "mininet_check"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    installed_rules: list[str] = []
 
     try:
         net.start()
         print("*** Network up:", len(net.switches), "switches,", len(net.hosts), "hosts")
 
-        state = NetworkState(output_dir=PROJECT_ROOT / "results" / "mininet_check")
+        state = NetworkState(output_dir=output_dir)
         builder = GraphBuilder(state)
         path_nodes = builder.get_candidate_paths(SRC_NODE, DST_NODE, max_paths=1)[0]
         path = [topo.node_mapping[n][0] for n in path_nodes]
@@ -133,17 +137,32 @@ def main() -> None:
             )
             for cmd in (forward_cmd, reverse_cmd):
                 print("   ", cmd)
+                installed_rules.append(cmd)
                 result = switch.cmd(cmd)
                 if result.strip():
                     print("      !", result.strip())
 
         print(f"*** Pinging {src_host_name}({src_ip}) -> {dst_host_name}({dst_ip}), path-only, no controller")
-        result = src_host.cmd(f"ping -c 3 -W 2 {dst_ip}")
-        print(result)
+        ping_output = src_host.cmd(f"ping -c 3 -W 2 {dst_ip}")
+        print(ping_output)
 
-        loss_line = [l for l in result.splitlines() if "packet loss" in l]
+        loss_line = [l for l in ping_output.splitlines() if "packet loss" in l]
         success = bool(loss_line) and "0% packet loss" in loss_line[0]
         print("\n*** RESULT:", "SUCCESS - path rules work on real OVS" if success else "FAILED - see output above")
+
+        report_path = output_dir / "verification_report.md"
+        report_path.write_text(
+            "# Mininet Path Verification Report\n\n"
+            f"Generated: {datetime.now().isoformat()}\n\n"
+            f"## Network\n{len(net.switches)} switches, {len(net.hosts)} hosts "
+            "(full GeantTopology, failMode=secure, no controller)\n\n"
+            f"## Path Under Test\nGEANT nodes: {path_nodes}\nSwitches: {path}\n\n"
+            "## Installed OpenFlow Rules\n```\n" + "\n".join(installed_rules) + "\n```\n\n"
+            f"## Ping Result ({src_host_name} -> {dst_host_name})\n```\n{ping_output}```\n\n"
+            f"## Result\n{'SUCCESS' if success else 'FAILED'}\n",
+            encoding="utf-8",
+        )
+        print(f"*** Report saved: {report_path}")
 
     finally:
         net.stop()
