@@ -2,10 +2,12 @@
 
 ## Summary
 
-**Overall Status: ✅ Weeks 1–6 implemented and passing (35/35 tests), structurally aligned with
-requirements.** This banner originally read "100% ALIGNED" when Weeks 3–6 were still placeholders
-(2026-07); see §"Final Verdict" at the bottom and `results/reports/experiment_validation_report.md`
-for what that claim didn't cover at the time and what's been verified against actual code since.
+**Overall Status: ✅ Weeks 1–6 implemented and passing (48/48 tests), structurally aligned with
+requirements — and, as of 2026-08-11, also verified against a real Mininet/OVS network, not just
+the offline simulation (see §4a).** This banner originally read "100% ALIGNED" when Weeks 3–6 were
+still placeholders (2026-07); see §"Final Verdict" at the bottom and
+`results/reports/experiment_validation_report.md` for what that claim didn't cover at the time and
+what's been verified against actual code since.
 
 ---
 
@@ -227,9 +229,59 @@ logic that already existed in `verify_week2.py`).
   made 2026-08-02: leave as-is, documented, rather than guess at ODL's RESTCONF schema without a
   live controller to verify against.
 - `scripts/start_odl.sh` is an explicit placeholder — the real startup commands depend on
-  which ODL distribution/version is installed on the actual testbed.
-- T-001–T-004 (Mininet/ODL clean-startup, `pingall`, iperf-based monitor checks) require the
-  real testbed and have not been run in this (offline) environment.
+  which ODL distribution/version is installed on the actual testbed. This remains open: the
+  project's actual chosen deployment path is direct OVS control (`ovs-ofctl`), not
+  controller-mediated ODL, so this was deprioritized rather than fixed — see §4a.
+- ~~T-001–T-004 (Mininet clean-startup, `pingall`, real rule-push checks) require the real
+  testbed and have not been run in this (offline) environment.~~ **No longer accurate as of
+  2026-08-11** — done against a real Mininet/OVS network; see §4a. The ODL-specific half of this
+  item (an actual ODL controller instance) is still untested, consistent with the `ODLClient`
+  decision above.
+
+---
+
+## 4a. Real Mininet/OVS Deployment Verification (2026-08-11, extends Week 6)
+
+Everything above this section runs entirely offline (`NetworkState` seeded with synthetic
+statistics, no real network ever built). This section covers the one piece that can't be verified
+that way: whether the project's actual deployment mechanism — computing a path, then pushing it as
+`ovs-ofctl` rules with no controller — works against a real running network at all. Two bugs
+surfaced only once this was actually tried, neither visible from the offline simulation:
+
+- **`FlowInstaller` switch/host naming didn't match `topology.py`'s real naming.** It guessed
+  `s{node_id+1}`/`h{node_id+1}`; `topology.py` actually numbers switches/hosts by sorted *string*
+  order of the GEANT graph's node IDs. These coincide only for single-digit node IDs — 38 of 40
+  GEANT nodes were wrong. Fixed by adding an optional `node_mapping` parameter (backward-compatible;
+  the guess formula remains the default since the offline simulation never checks these names
+  against anything real). Regression-tested in `tests/test_flow_installer.py`.
+- **The generated rule strings were never valid OpenFlow syntax.** e.g.
+  `ovs-ofctl add-flow s13 priority=100,h13->h38,actions=output:s1` — `h13->h38` isn't a real match
+  field, and `output:s1` needs a numeric port, not a switch name. This was always intentional as
+  human-readable text for `dump_flows()`'s offline display, not something meant to be executed —
+  but that intent was never documented, so it looked like a real (broken) deployment path.
+  `scripts/mininet_path_verification.py` now does the real translation once a network is actually
+  running: real port numbers queried live via `ovs-vsctl ... ofport`, real `nw_dst=<ip>` match
+  fields, correct `-O OpenFlow13`.
+
+A third issue was found and fixed during verification itself, not from reading code: switches were
+first brought up with `failMode=standalone`, whose implicit table-miss action floods unmatched
+traffic via plain L2 learning with no loop prevention. GEANT is cyclic (61 edges over 40 nodes),
+so this caused a real broadcast storm (one switch's fallback rule processed 16 million packets in
+about two minutes) — the likely root cause of an earlier session where system load forced a
+reboot. Switched to `failMode=secure` (drops unmatched traffic by default), which also matches the
+project's actual design better: no reliance on switch auto-learning, only explicit pushed rules.
+
+**Results, both against the full real 40-switch `GeantTopology`:**
+
+| Script | What it checks | Result |
+|--------|-----------------|--------|
+| `scripts/mininet_path_verification.py` | A `GraphBuilder`-computed path, translated to real OpenFlow rules and pushed with no controller, is actually followed by real ICMP traffic | 0% packet loss |
+| `scripts/mininet_failure_recovery_demo.py` | A real link failure (Mininet interface brought down, not just a removed rule) is detected via `TopologyState.mark_link_failed`, `GraphBuilder` reroutes around it, stale rules are purged and replaced, traffic recovers, and the graph reflects the link's return once restored | 0% packet loss before failure, 0% after reroute, recomputed path after recovery == original path |
+
+This closes the "does this actually deploy" question the offline simulation structurally can't
+answer, without replacing the offline experiments — those remain the evidence for whether the
+stability-aware algorithm itself performs well, which these two scripts don't re-test (see the
+scripts' own docstrings for that distinction).
 
 ---
 
@@ -259,16 +311,21 @@ logic that already existed in `verify_week2.py`).
 | Baselines | ✅ Exact | Static + Dynamic |
 | Metrics | ✅ Exact | All required |
 | Project Structure | ✅ Cleaned up | `src/analysis/` and `src/traffic/` were empty scaffolding directories from the original 2026-07-18 skeleton, never populated (no `__init__.py`, nothing ever imported from them) — removed. The functionality those names implied already lives elsewhere: "traffic" in `experiments/traffic_generator.py` + `src/stability/traffic_policy.py`; "analysis" in the top-level `evaluation/` package. |
-| Test coverage | ✅ Closed two gaps | Added `tests/test_decision_engine.py` (7 tests) and `tests/test_calculate_metrics.py` (9 tests) — `DecisionEngine` and `evaluation/` were previously only exercised indirectly through full pipeline runs, with no dedicated, fast, isolated unit tests despite every sibling module (`change_budget`, `path_cost`, `persistence_checker`, `stability_manager`) having one. 35/35 tests now passing. |
+| Test coverage | ✅ Closed three gaps | Added `tests/test_decision_engine.py` (7 tests), `tests/test_calculate_metrics.py` (9 tests), and `tests/test_flow_installer.py` (4 tests, added 2026-08-11 after the real-deployment naming bug in §4a) — `DecisionEngine`, `evaluation/`, and `FlowInstaller` were previously only exercised indirectly, with no dedicated, fast, isolated unit tests despite every sibling module having one. 48/48 tests now passing. |
+| Real deployment | ✅ Verified 2026-08-11 | Static path push and dynamic failure/recovery both confirmed against a real 40-switch Mininet/OVS network with no controller, 0% packet loss — see §4a. |
 
 ---
 
 ## Final Verdict
 
-**✅ Weeks 1–6 are implemented and passing (19/19 tests), and Stage 6's comparative
-experiments are now driven by the real routing/decision/stability code rather than
-hardcoded outcomes.** See `results/reports/experiment_validation_report.md` for the
-full account of what was found broken/incomplete and fixed, and for the remaining
-open items that require a live Mininet/OpenDaylight testbed (T-001–T-004, the
-`odl_client.py` stub, and `scripts/start_odl.sh`). This document was last verified
-against the actual code on 2026-08-02 — treat any date after that as unverified.
+**✅ Weeks 1–6 are implemented and passing (48/48 tests), Stage 6's comparative
+experiments are driven by the real routing/decision/stability code rather than
+hardcoded outcomes, and — as of 2026-08-11 — the actual deployment mechanism (path
+computation → real OpenFlow rule push, no controller) has been verified end to end
+against a real 40-switch Mininet/OVS network, including a live link failure/recovery
+run (§4a).** See `results/reports/experiment_validation_report.md` for the full
+account of what was found broken/incomplete and fixed. Remaining open items are
+ODL-specific (the `odl_client.py` stub and `scripts/start_odl.sh` — the project's
+actual deployment path is direct OVS control, not controller-mediated ODL, so these
+were deprioritized rather than fixed). This document was last verified against the
+actual code on 2026-08-11 — treat any date after that as unverified.
