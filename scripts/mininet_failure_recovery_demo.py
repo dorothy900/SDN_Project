@@ -10,7 +10,7 @@ behavior: an installed path's first-hop link genuinely fails (the real
 Mininet interface is brought down, not just a flow rule removed), the
 project's own GraphBuilder recomputes a path against its own NetworkState
 (which now excludes the failed link, via the same TopologyState.mark_link_failed
-machinery the offline scenario_failure_recovery.py experiment relies on),
+machinery the offline failure_recovery.py experiment relies on),
 stale rules are purged, fresh rules are installed for the new path, and a
 live ping confirms traffic actually follows the new path. The link is then
 restored and the graph is confirmed to route through it again.
@@ -18,7 +18,7 @@ restored and the graph is confirmed to route through it again.
 This does not re-implement the offline scenario's stability-gate timing
 (ThresholdDetector persistence windows, ChangeBudget throttling, flap
 handling) -- that logic is already validated in experiments/
-scenario_failure_recovery.py against synthetic link statistics. This script
+failure_recovery.py against synthetic link statistics. This script
 answers a narrower, complementary question: when the network's own routing
 code decides to reroute around a real failure, do the resulting OpenFlow
 rules actually work on real hardware/software switches.
@@ -152,7 +152,7 @@ def main() -> None:
         print(f"*** Failing real link {fail_switch_u}<->{fail_switch_v} "
               f"(GEANT nodes {fail_u}<->{fail_v}, the path's first hop)")
         net.configLinkStatus(fail_switch_u, fail_switch_v, "down")
-        # Same structural mechanism experiments/scenario_failure_recovery.py's
+        # Same structural mechanism experiments/failure_recovery.py's
         # underlying driver relies on: TopologyState.mark_link_failed removes
         # the edge from get_active_graph(), so GraphBuilder can't route through it.
         state.topology.set_link_status(fail_u, fail_v, is_up=False)

@@ -43,10 +43,10 @@ what's been verified against actual code since.
 
 | Scenario | File Created | Purpose |
 |----------|--------------|---------|
-| Increasing Traffic Demand | `scenario_increasing_load.py` | ✅ Exists as planned |
-| Local Link Congestion | `scenario_congestion.py` | ✅ Exists as planned |
-| Link Failure & Recovery | `scenario_failure_recovery.py` | ✅ Exists as planned |
-| (Stale Stats) | `scenario_stale_stats.py` | ✅ Exists as planned |
+| Increasing Traffic Demand | `increasing_load.py` | ✅ Exists as planned |
+| Local Link Congestion | `congestion.py` | ✅ Exists as planned |
+| Link Failure & Recovery | `failure_recovery.py` | ✅ Exists as planned |
+| (Stale Stats) | `stale_stats.py` | ✅ Exists as planned |
 | Baseline Comparison | `baseline_comparison.py` | ✅ Exists as planned |
 
 ---
@@ -80,7 +80,7 @@ path_cost_weights:
 ```
 
 **Formula**: Cost = α·Utilization + β·Delay + γ·Loss + δ·Priority + ε·Reliability  
-**Implementation Location**: [`src/decision/path_cost.py`](file:///home/vboxuser/sdn-project/src/decision/path_cost.py) — implemented and unit-tested (`tests/pathCost.py`, `results/decision_engine/path_cost_unit_tests.txt`)
+**Implementation Location**: [`src/decision/path_cost.py`](file:///home/vboxuser/sdn-project/src/decision/path_cost.py) — implemented and unit-tested (`tests/path_cost.py`, `results/decision_engine/path_cost_unit_tests.txt`)
 
 ---
 
@@ -171,7 +171,7 @@ sdn-dissertation/
 - [x] Topology verification — `experiment.py --stage 1` now actually loads
       `data/Geant2012.graphml` and computes node/link counts, connectivity, diameter, and average
       degree (previously `stage1()` just printed and wrote hardcoded strings; fixed 2026-08-09 via
-      `experiments/topology_validation.py`, reusing the real logic that originally lived in a
+      `experiments/topology_check.py`, reusing the real logic that originally lived in a
       standalone `verify_week1.py` script but was never wired into the main entry point; that
       script, briefly kept as `archive/verify_topology_monitor.py`, was deleted 2026-08-11 as
       fully redundant once its logic had been ported)
@@ -182,7 +182,7 @@ sdn-dissertation/
 - [x] Integration complete
 
 ### Week 2: Network State ✅ 100% Done — `experiment.py --stage 2` now actually runs
-`experiments/network_state_validation.py` (rate calc, utilization, history window, link status,
+`experiments/network_state_check.py` (rate calc, utilization, history window, link status,
 `get_network_state()` interface, integration report) and produces every file
 `README.md` promises, including `rate_validation.csv` which `stage2()` previously never generated at
 all (it was a no-op — three `print()` lines and nothing else; fixed 2026-08-09, reusing the real
@@ -219,7 +219,7 @@ been ported).
 - [x] All 4 scenario scripts (increasing load, congestion, failure/recovery, stale stats) now
       drive the real `src/routing`/`src/decision`/`src/stability` code against the real GEANT
       topology — previously every outcome was a hardcoded `if algorithm == X` branch; fixed 2026-08-02
-- [x] Added `scenario_priority_policy.py` (Experiment E) to close the one Part-2 hypothesis
+- [x] Added `priority_policy.py` (Experiment E) to close the one Part-2 hypothesis
       (H-E2) that had no dedicated Stage 6 run
 
 ### Known open items (see `results/reports/experiment_validation_report.md`)
@@ -256,7 +256,7 @@ surfaced only once this was actually tried, neither visible from the offline sim
   order of the GEANT graph's node IDs. These coincide only for single-digit node IDs — 38 of 40
   GEANT nodes were wrong. Fixed by adding an optional `node_mapping` parameter (backward-compatible;
   the guess formula remains the default since the offline simulation never checks these names
-  against anything real). Regression-tested in `tests/flowInstaller.py`.
+  against anything real). Regression-tested in `tests/flow_installer.py`.
 - **The generated rule strings were never valid OpenFlow syntax.** e.g.
   `ovs-ofctl add-flow s13 priority=100,h13->h38,actions=output:s1` — `h13->h38` isn't a real match
   field, and `output:s1` needs a numeric port, not a switch name. This was always intentional as
@@ -314,7 +314,7 @@ scripts' own docstrings for that distinction).
 | Baselines | ✅ Exact | Static + Dynamic |
 | Metrics | ✅ Exact | All required |
 | Project Structure | ✅ Cleaned up | `src/analysis/` and `src/traffic/` were empty scaffolding directories from the original 2026-07-18 skeleton, never populated (no `__init__.py`, nothing ever imported from them) — removed. The functionality those names implied already lives elsewhere: "traffic" in `experiments/traffic_generator.py` + `src/stability/traffic_policy.py`; "analysis" in the top-level `evaluation/` package. |
-| Test coverage | ✅ Closed three gaps | Added `tests/decisionEngine.py` (7 tests), `tests/calculateMetrics.py` (9 tests), and `tests/flowInstaller.py` (4 tests, added 2026-08-11 after the real-deployment naming bug in §4a) — `DecisionEngine`, `evaluation/`, and `FlowInstaller` were previously only exercised indirectly, with no dedicated, fast, isolated unit tests despite every sibling module having one. 48/48 tests now passing. |
+| Test coverage | ✅ Closed three gaps | Added `tests/decision_engine.py` (7 tests), `tests/calculate_metrics.py` (9 tests), and `tests/flow_installer.py` (4 tests, added 2026-08-11 after the real-deployment naming bug in §4a) — `DecisionEngine`, `evaluation/`, and `FlowInstaller` were previously only exercised indirectly, with no dedicated, fast, isolated unit tests despite every sibling module having one. 48/48 tests now passing. |
 | Real deployment | ✅ Verified 2026-08-11 | Static path push and dynamic failure/recovery both confirmed against a real 40-switch Mininet/OVS network with no controller, 0% packet loss — see §4a. |
 
 ---

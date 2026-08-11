@@ -158,40 +158,40 @@ sdn-dissertation/
  │       └── traffic_policy.py
  │
  ├── experiments/                   # Experiment automation (Stages 1-6)
- │   ├── topology_validation.py           # Stage 1
- │   ├── network_state_validation.py      # Stage 2
+ │   ├── topology_check.py           # Stage 1
+ │   ├── network_state_check.py      # Stage 2
  │   ├── baseline_comparison.py           # Stage 3
- │   ├── decision_engine_validation.py    # Stage 4
- │   ├── stability_validation.py          # Stage 5
+ │   ├── decision_engine_check.py    # Stage 4
+ │   ├── stability.py          # Stage 5
  │   ├── pilot_experiments.py             # Stage 6 orchestrator
  │   ├── sensitivity_analysis.py          # parameter sweeps, opt-in (see Quick Start)
  │   ├── simulation_common.py             # shared static/dynamic/proposed harness for Stage 6
  │   ├── traffic_generator.py
- │   ├── scenario_increasing_load.py      # Experiment A
- │   ├── scenario_congestion.py           # Experiment B
- │   ├── scenario_failure_recovery.py     # Experiment C
- │   ├── scenario_stale_stats.py          # Experiment D
- │   └── scenario_priority_policy.py      # Experiment E, opt-in (see Quick Start)
+ │   ├── increasing_load.py      # Experiment A
+ │   ├── congestion.py           # Experiment B
+ │   ├── failure_recovery.py     # Experiment C
+ │   ├── stale_stats.py          # Experiment D
+ │   └── priority_policy.py      # Experiment E, opt-in (see Quick Start)
  │
  ├── evaluation/                    # Result analysis ("analysis" -- there is no src/analysis/)
  │   ├── parse_results.py
  │   └── calculate_metrics.py
  │
  ├── tests/                         # Unit + integration tests (pytest tests/ -v)
- │   ├── statisticsCollector.py
- │   ├── thresholdDetector.py
- │   ├── persistenceChecker.py
- │   ├── pathCost.py
- │   ├── changeBudget.py
- │   ├── stabilityManager.py
- │   ├── decisionEngine.py
- │   ├── calculateMetrics.py
- │   ├── flowInstaller.py
- │   ├── networkStateIntegration.py
- │   ├── baselineComparisonIntegration.py
- │   ├── decisionEngineIntegration.py
- │   ├── stabilityIntegration.py
- │   └── pilotIntegration.py
+ │   ├── statistics_collector.py
+ │   ├── threshold_detector.py
+ │   ├── persistence_checker.py
+ │   ├── path_cost.py
+ │   ├── change_budget.py
+ │   ├── stability_manager.py
+ │   ├── decision_engine.py
+ │   ├── calculate_metrics.py
+ │   ├── flow_installer.py
+ │   ├── network_state_integration.py
+ │   ├── baseline_comparison_integration.py
+ │   ├── decision_engine_integration.py
+ │   ├── stability_integration.py
+ │   └── pilot_integration.py
  │
  ├── experiment.py              # Main entry point
  │
@@ -220,7 +220,7 @@ Run unit tests:
 pytest tests/ -v
 
 # Specific test
-pytest tests/thresholdDetector.py -v
+pytest tests/threshold_detector.py -v
 ```
 
 ## Stability Mechanisms

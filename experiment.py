@@ -13,11 +13,11 @@ import argparse
 from pathlib import Path
 
 from experiments.baseline_comparison import BaselineComparison
-from experiments.decision_engine_validation import DecisionEngineValidation
-from experiments.network_state_validation import NetworkStateValidation
+from experiments.decision_engine_check import DecisionEngineValidation
+from experiments.network_state_check import NetworkStateValidation
 from experiments.pilot_experiments import PilotExperimentRunner
-from experiments.stability_validation import StabilityValidation
-from experiments.topology_validation import TopologyValidation
+from experiments.stability import StabilityValidation
+from experiments.topology_check import TopologyValidation
 
 
 def main():
