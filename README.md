@@ -112,9 +112,11 @@ sdn-dissertation/
  ├── requirements.txt               # Python dependencies
  ├── .gitignore
  │
- ├── scripts/                       # Shell scripts
+ ├── scripts/                       # Deployment & real-network verification
  │   ├── start_odl.sh
- │   └── start_topology.sh
+ │   ├── start_topology.sh
+ │   ├── mininet_path_verification.py       # real Mininet/OVS rule push, full GeantTopology
+ │   └── mininet_failure_recovery_demo.py   # real link failure -> reroute -> recovery
  │
  ├── config/                        # Configuration
  │   ├── topology.yaml
@@ -187,7 +189,10 @@ sdn-dissertation/
  │   ├── test_calculate_metrics.py
  │   └── test_stage2_integration.py .. test_stage6_integration.py
  │
- ├── verify_week1.py, verify_week2.py, verify_detailed_week1.py  # superseded, see note below
+ ├── archive/                       # superseded scripts, see note below
+ │   ├── verify_topology_monitor.py
+ │   ├── verify_topology_monitor_acceptance_criteria.py
+ │   └── verify_network_state.py
  │
  ├── run_experiment.py              # Main entry point
  │
@@ -258,10 +263,11 @@ pytest tests/test_threshold_detector.py -v
 
 ## Legacy scripts
 
-`verify_week1.py`, `verify_week2.py`, and `verify_detailed_week1.py` are standalone scripts from
-early development. Their real logic (topology loading, rate calculation, history window, link
-status, network-state interface) has since been ported into
-`experiments/run_topology_validation.py` and `experiments/run_network_state_validation.py`, which
-`run_experiment.py --stage 1` / `--stage 2` actually call. The `verify_*.py` scripts still run and
-still pass, but they are not part of the pipeline — treat `experiments/run_*.py` + `pytest tests/`
-as the authoritative path, not these.
+`archive/verify_topology_monitor.py`, `archive/verify_topology_monitor_acceptance_criteria.py`,
+and `archive/verify_network_state.py` are standalone scripts from early development (originally
+named `verify_week1.py` / `verify_detailed_week1.py` / `verify_week2.py`). Their real logic
+(topology loading, rate calculation, history window, link status, network-state interface) has
+since been ported into `experiments/run_topology_validation.py` and
+`experiments/run_network_state_validation.py`, which `run_experiment.py --stage 1` / `--stage 2`
+actually call. The `archive/` scripts still run and still pass, but they are not part of the
+pipeline — treat `experiments/run_*.py` + `pytest tests/` as the authoritative path, not these.

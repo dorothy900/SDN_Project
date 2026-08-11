@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """
-Week 1 Verification - System Validation
-Check all Week 1 tasks completed and produce results
+Topology & Monitor Verification (originally "Week 1 Verification")
+Checks topology loading, connectivity, monitor module separation, data
+models, and integration.
 
 SUPERSEDED: this script's real logic (topology loading, node/link counts,
 connectivity, diameter) has been ported into
 experiments/run_topology_validation.py, which `run_experiment.py --stage 1`
 actually calls. This file still runs and still passes, but is not part of
-the pipeline -- kept for reference, not as the authoritative check.
+the pipeline -- kept in archive/ for reference, not as the authoritative check.
 """
 
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 import networkx as nx
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # moved into archive/ 2026-08-11
 
 def verify_day12_topology():
     """Day 1-2: Topology Verification"""

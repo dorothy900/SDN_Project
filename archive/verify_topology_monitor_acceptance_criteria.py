@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 """
-Week 1 Detailed Verification - Check all acceptance criteria
+Topology & Monitor Acceptance Criteria Checklist
+(originally "Week 1 Detailed Verification") - checks each documented
+acceptance criterion individually: connectivity, topology structure, monitor
+module separation, statistics data format.
 
 SUPERSEDED: see experiments/run_topology_validation.py, which
 `run_experiment.py --stage 1` actually calls. This file still runs and still
-passes, but is not part of the pipeline -- kept for reference, not as the
-authoritative check.
+passes, but is not part of the pipeline -- kept in archive/ for reference,
+not as the authoritative check.
 """
 
+import sys
 import time
 import csv
 from datetime import datetime
 from pathlib import Path
 import networkx as nx
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # moved into archive/ 2026-08-11
 
 def check_day1_connectivity():
     """Day 1: Clean startup & switch connectivity"""

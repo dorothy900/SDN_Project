@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """
-Week 2 Complete Verification
-Runs all Day 1-6 checks and produces final verification.
+Network State Verification (originally "Week 2 Complete Verification")
+Checks rate calculation, utilization mapping, history window, link status
+detection, and the get_network_state() interface.
 
 SUPERSEDED: this script's real logic (rate calculation, utilization, history
 window, link status, network-state interface) has been ported into
 experiments/run_network_state_validation.py, which `run_experiment.py
 --stage 2` actually calls. This file still runs and still passes, but is not
-part of the pipeline -- kept for reference, not as the authoritative check.
+part of the pipeline -- kept in archive/ for reference, not as the
+authoritative check.
 """
+import sys
 import time
 import random
 from datetime import datetime
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # moved into archive/ 2026-08-11
 
 from src.monitor.network_state import NetworkState
 from src.monitor.link_mapper import LinkMapper

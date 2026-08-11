@@ -173,7 +173,8 @@ sdn-dissertation/
       `data/Geant2012.graphml` and computes node/link counts, connectivity, diameter, and average
       degree (previously `stage1()` just printed and wrote hardcoded strings; fixed 2026-08-09 via
       `experiments/run_topology_validation.py`, reusing the real logic that already existed in
-      `verify_week1.py` but was never wired into the main entry point)
+      `archive/verify_topology_monitor.py` (renamed 2026-08-11, formerly `verify_week1.py`) but
+      was never wired into the main entry point)
 - [x] Connected nodes check
 - [x] Alternative paths
 - [x] Monitor module separation
@@ -185,7 +186,8 @@ sdn-dissertation/
 `get_network_state()` interface, integration report) and produces every file
 `README.md` promises, including `rate_validation.csv` which `stage2()` previously never generated at
 all (it was a no-op — three `print()` lines and nothing else; fixed 2026-08-09, reusing the real
-logic that already existed in `verify_week2.py`).
+logic that already existed in `archive/verify_network_state.py` (renamed 2026-08-11, formerly
+`verify_week2.py`).
 - [x] Real-time rate calculation
 - [x] Link utilization mapping
 - [x] Rolling history window
