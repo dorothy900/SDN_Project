@@ -145,7 +145,6 @@ sdn-dissertation/
 │
 ├── config/                         ✅ Complete
 │   ├── topology.yaml
-│   ├── links.yaml
 │   ├── policies.yaml              ✅ Traffic classes
 │   └── decision.yaml              ✅ Stability params
 │
@@ -160,7 +159,7 @@ sdn-dissertation/
 ├── experiments/                    ✅ Scenarios ready
 ├── evaluation/                     ✅ Metrics ready
 ├── tests/                          ✅ Unit tests
-├── run_experiment.py               ✅ Single entry point
+├── experiment.py               ✅ Single entry point
 └── results/                        ✅ Output organized
 ```
 
@@ -169,25 +168,27 @@ sdn-dissertation/
 ## 4. Week-by-Week Task Verification
 
 ### Week 1: System Validation ✅ 100% Done
-- [x] Topology verification — `run_experiment.py --stage 1` now actually loads
+- [x] Topology verification — `experiment.py --stage 1` now actually loads
       `data/Geant2012.graphml` and computes node/link counts, connectivity, diameter, and average
       degree (previously `stage1()` just printed and wrote hardcoded strings; fixed 2026-08-09 via
-      `experiments/topology_validation.py`, reusing the real logic that already existed in
-      `archive/verify_topology_monitor.py` (renamed 2026-08-11, formerly `verify_week1.py`) but
-      was never wired into the main entry point)
+      `experiments/topology_validation.py`, reusing the real logic that originally lived in a
+      standalone `verify_week1.py` script but was never wired into the main entry point; that
+      script, briefly kept as `archive/verify_topology_monitor.py`, was deleted 2026-08-11 as
+      fully redundant once its logic had been ported)
 - [x] Connected nodes check
 - [x] Alternative paths
 - [x] Monitor module separation
 - [x] Statistics model format
 - [x] Integration complete
 
-### Week 2: Network State ✅ 100% Done — `run_experiment.py --stage 2` now actually runs
+### Week 2: Network State ✅ 100% Done — `experiment.py --stage 2` now actually runs
 `experiments/network_state_validation.py` (rate calc, utilization, history window, link status,
 `get_network_state()` interface, integration report) and produces every file
 `README.md` promises, including `rate_validation.csv` which `stage2()` previously never generated at
 all (it was a no-op — three `print()` lines and nothing else; fixed 2026-08-09, reusing the real
-logic that already existed in `archive/verify_network_state.py` (renamed 2026-08-11, formerly
-`verify_week2.py`).
+logic that originally lived in a standalone `verify_week2.py` script; that script, briefly kept as
+`archive/verify_network_state.py`, was deleted 2026-08-11 as fully redundant once its logic had
+been ported).
 - [x] Real-time rate calculation
 - [x] Link utilization mapping
 - [x] Rolling history window

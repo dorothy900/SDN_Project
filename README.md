@@ -23,7 +23,7 @@ pip install -r requirements.txt
 
 ```bash
 # Verify topology structure
-python3 run_experiment.py --stage 1
+python3 experiment.py --stage 1
 
 # View results
 cat results/topology/topology_validation.txt
@@ -33,7 +33,7 @@ cat results/topology/topology_validation.txt
 
 ```bash
 # Run stage 2
-python3 run_experiment.py --stage 2
+python3 experiment.py --stage 2
 
 # Expected outputs in results/network_state/:
 #   - rate_validation.csv
@@ -52,7 +52,7 @@ current pipeline — see the note at the top of `odl_client.py` for why it's lef
 
 ```bash
 # Run baseline comparison
-python3 run_experiment.py --stage 3
+python3 experiment.py --stage 3
 
 # Expected outputs in results/baseline_comparison/:
 #   - baseline_summary_repeated.csv
@@ -62,7 +62,7 @@ python3 run_experiment.py --stage 3
 
 ```bash
 # Test stability-aware decisions
-python3 run_experiment.py --stage 4
+python3 experiment.py --stage 4
 
 # Expected outputs in results/decision_engine/:
 #   - decision_log.csv
@@ -73,7 +73,7 @@ python3 run_experiment.py --stage 4
 
 ```bash
 # Test stability mechanisms
-python3 run_experiment.py --stage 5
+python3 experiment.py --stage 5
 
 # Expected outputs in results/stability/:
 #   - hysteresis_trace.csv
@@ -84,10 +84,10 @@ python3 run_experiment.py --stage 5
 
 ```bash
 # Run all stages and scenarios
-python3 run_experiment.py --stage full
+python3 experiment.py --stage full
 
 # Run specific scenario
-python3 run_experiment.py --stage full --scenario congestion
+python3 experiment.py --stage full --scenario congestion
 ```
 
 **`--stage full` runs Experiments A–D only (increasing load, congestion, failure/recovery, stale
@@ -96,7 +96,7 @@ opt-in runs — the default command above does not include them:
 
 ```bash
 # Include Experiment E (priority policy) in the aggregated pilot report
-python3 run_experiment.py --stage 6 --scenario all_plus_priority --repeat 5
+python3 experiment.py --stage 6 --scenario all_plus_priority --repeat 5
 # -> results/pilot/scenario5/, folded into pilot_summary.csv / full_results_repeated.csv
 
 # Parameter sensitivity analysis (why the config/decision.yaml defaults are what they are)
@@ -120,7 +120,6 @@ sdn-dissertation/
  │
  ├── config/                        # Configuration
  │   ├── topology.yaml
- │   ├── links.yaml                 # legacy: duplicates decision.yaml's cost/threshold values, not read by any module
  │   ├── policies.yaml              # Traffic class priorities
  │   └── decision.yaml              # Rerouting parameters
  │
@@ -194,12 +193,7 @@ sdn-dissertation/
  │   ├── stabilityIntegration.py
  │   └── pilotIntegration.py
  │
- ├── archive/                       # superseded scripts, see note below
- │   ├── verify_topology_monitor.py
- │   ├── verify_topology_monitor_acceptance_criteria.py
- │   └── verify_network_state.py
- │
- ├── run_experiment.py              # Main entry point
+ ├── experiment.py              # Main entry point
  │
  └── results/                       # Output directory
      ├── topology/
@@ -214,7 +208,6 @@ sdn-dissertation/
 
 All parameters are in `config/`:
 - `topology.yaml`: Topology & controller settings
-- `links.yaml`: Link monitoring parameters
 - `policies.yaml`: Traffic class priorities
 - `decision.yaml`: Thresholds & stability parameters
 
@@ -265,14 +258,3 @@ pytest tests/thresholdDetector.py -v
 3. Link Failure & Recovery
 4. Stale Statistics
 5. Priority-Aware Traffic Policy (opt-in, `--scenario all_plus_priority` — see Quick Start)
-
-## Legacy scripts
-
-`archive/verify_topology_monitor.py`, `archive/verify_topology_monitor_acceptance_criteria.py`,
-and `archive/verify_network_state.py` are standalone scripts from early development (originally
-named `verify_week1.py` / `verify_detailed_week1.py` / `verify_week2.py`). Their real logic
-(topology loading, rate calculation, history window, link status, network-state interface) has
-since been ported into `experiments/topology_validation.py` and
-`experiments/network_state_validation.py`, which `run_experiment.py --stage 1` / `--stage 2`
-actually call. The `archive/` scripts still run and still pass, but they are not part of the
-pipeline — treat `experiments/*.py` + `pytest tests/` as the authoritative path, not these.
