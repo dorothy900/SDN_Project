@@ -82,6 +82,21 @@ path_cost_weights:
 **Formula**: Cost = α·Utilization + β·Delay + γ·Loss + δ·Priority + ε·Reliability  
 **Implementation Location**: [`src/decision/path_cost.py`](file:///home/vboxuser/sdn-project/src/decision/path_cost.py) — implemented and unit-tested (`tests/path_cost.py`, `results/decision_engine/path_cost_unit_tests.txt`)
 
+**Known limitation (identified 2026-08-11, not fixed): no self-influence / offered-load accounting.**
+Every edge's utilization term is the link's *currently observed* utilization
+(`GraphBuilder._calculate_edge_cost`, fed by `NetworkState.get_link_stats()`) — i.e. what the link
+looks like before this flow is placed on it. The cost model never adds the flow's own offered load
+to a candidate path's projected utilization, so a candidate that looks cheap under background
+traffic can still become congested once a large ("elephant") flow actually lands on it — the
+decision can look correct at evaluation time and still under-perform once executed. This is a
+genuine gap, not a simplification the code works around elsewhere: `grep` confirms no
+`offered_load`/`residual`/`projected` accounting anywhere in `path_cost.py` or `graph_builder.py`.
+Real traffic-engineering systems (e.g. MPLS-TE) typically address this with residual-bandwidth /
+admission-control reservation, which this project does not implement — in scope, this project's
+research question is *when to reroute and how to avoid instability*, not *capacity-aware placement
+of a specific flow's demand*. Worth stating explicitly as a limitation/future-work item rather than
+leaving it implicit.
+
 ---
 
 ### E. Stability Mechanisms ✅
