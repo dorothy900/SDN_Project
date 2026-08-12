@@ -147,15 +147,37 @@ delay/loss are now derived from current utilization via `congestion_delay_bump_m
 queueing delay, grows as `utilization/(1-utilization)`) and `congestion_loss_bump()` (near-zero below
 70% utilization, then rises quadratically) — chosen, documented models, not universal laws.
 
-**A consequence worth flagging explicitly: this makes the additive cost formula double-count the
+**A consequence worth flagging explicitly: this made the additive cost formula double-count the
 same congestion signal.** Once delay and loss are functions of utilization, `∂cost/∂u = α +
-β·(∂delay/∂u)/1000 + γ·(∂loss/∂u)`, not just α. Evaluated near u=0.9 at the current default weights:
-0.4 (direct) + 0.24 (via delay) + 0.044 (via loss) = 0.684 total — utilization's real influence on
-cost is ~1.7x the α term alone, because delay and loss are re-punishing the same underlying signal
-they're derived from. This is a real form of multicollinearity in the cost formula, not fixed as
-part of this pass (would require re-deriving the formula to weight residuals — the part of delay/loss
-*not* explained by utilization — rather than raw values). Recorded here as a known, quantified
-limitation for the same reason as the ones above: better to state it than leave it implicit.
+β·(∂delay/∂u)/1000 + γ·(∂loss/∂u)`, not just α. Evaluated near u=0.9 at the default weights: 0.4
+(direct) + 0.24 (via delay) + 0.044 (via loss) = 0.684 total — utilization's real influence on cost
+was ~1.7x the α term alone, because delay and loss were re-punishing the same underlying signal
+they're derived from. This is a real form of multicollinearity in the cost formula.
+
+**Fixed 2026-08-12: β/γ now price residuals, not raw delay/loss.** Chosen over documenting-as-a-
+known-limitation (the user explicitly picked the more rigorous fix over leaving it as-is). Added
+`src/routing/congestion_model.py::predicted_delay_ms()`/`predicted_loss()` — the same
+utilization -> expected-delay/loss curves the offline simulator already used to *generate* synthetic
+values (`congestion_delay_bump_ms`/`congestion_loss_bump`, now defined once here and imported by
+both `experiments/simulation_common.py` and `GraphBuilder`, so the two can't drift apart). `_calculate_
+edge_cost` now computes `delay_residual = link_stats.delay_ms - predicted_delay_ms(utilization)` and
+`loss_residual = link_stats.packet_loss - predicted_loss(utilization)`, and feeds *those* into β/γ
+instead of the raw measurements. A link whose delay/loss exactly match what its utilization already
+predicts now contributes zero extra cost from β/γ — only genuinely anomalous congestion (worse than
+utilization explains: a real queueing spike, a physically longer link) gets priced beyond α. Residuals
+are signed, not clamped at zero, so a link doing *better* than predicted is rewarded rather than
+merely never penalized — this is deliberate (see `tests/graph_builder.py::
+test_link_performing_better_than_predicted_costs_less_not_just_never_penalized`), consistent with
+treating the formula as pricing genuine information, not one-directional punishment. Covered by
+`tests/graph_builder.py`'s three residual tests (exact match -> zero extra cost, anomalous delay ->
+higher cost, better-than-predicted -> lower cost).
+
+Note this changes the numeric cost values (and therefore possibly path choices) reported by every
+experiment that goes through `GraphBuilder` with real or simulator-derived delay/loss —
+`baseline_comparison.py`, `sensitivity_analysis.py`, `pilot_experiments.py`, `weight_search_
+comparison.py` — since they previously priced raw values. Results documented elsewhere in this file
+and in prior week's reports reflect the pre-fix formula; re-running those experiments to refresh the
+recorded numbers is a natural follow-up, not done automatically as part of this fix.
 
 **Fixed 2026-08-12: δ's cost term repurposed from a dead "priority" placeholder to a real link
 instability/churn signal.** `_calculate_edge_cost` previously multiplied δ by a hardcoded local

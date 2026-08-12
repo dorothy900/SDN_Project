@@ -12,6 +12,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import networkx as nx
 
 from ..monitor.network_state import NetworkState
+from .congestion_model import predicted_delay_ms, predicted_loss
 
 
 class GraphBuilder:
@@ -155,20 +156,44 @@ class GraphBuilder:
         happens). Unlike priority, this is a genuine link-level property, so
         it fits the one-shared-graph design without needing a separate graph
         per flow/service type.
+
+        beta/gamma use *residuals* against congestion_model.predicted_delay_ms/
+        predicted_loss (fixed 2026-08-12), not raw delay_ms/packet_loss. In a
+        real network, delay and loss are largely symptoms of utilization
+        (queueing/buffer overflow), so feeding their raw values into an
+        additive formula alongside alpha*utilization double-counts the same
+        congestion signal (quantified: at u=0.9 the true d(cost)/du was ~1.7x
+        the alpha term alone -- see compliance_check.md). Subtracting each
+        link's utilization-predicted delay/loss leaves only the part beta/
+        gamma should actually be pricing: congestion *beyond* what this
+        link's utilization already explains (a physically longer link, a
+        real queueing anomaly). A link performing exactly as utilization
+        predicts contributes zero extra cost from these two terms; residuals
+        are signed, not clamped at zero, so a link doing *better* than its
+        utilization predicts is rewarded, not just never penalized.
         """
         if link_stats is None:
             return 1.0
 
         utilization = float(link_stats.utilization)
-        delay = (float(link_stats.delay_ms) / 1000.0) if link_stats.delay_ms is not None else 0.0
-        loss = float(link_stats.packet_loss) if link_stats.packet_loss is not None else 0.0
+
+        delay_residual_ms = (
+            float(link_stats.delay_ms) - predicted_delay_ms(utilization)
+            if link_stats.delay_ms is not None
+            else 0.0
+        )
+        loss_residual = (
+            float(link_stats.packet_loss) - predicted_loss(utilization)
+            if link_stats.packet_loss is not None
+            else 0.0
+        )
         instability = self.network_state.get_link_churn_score(link_id)
         reliability_penalty = 0.0 if link_stats.status == "up" else 1.0
 
         return (
             self.weights["alpha"] * utilization
-            + self.weights["beta"] * delay
-            + self.weights["gamma"] * loss
+            + self.weights["beta"] * (delay_residual_ms / 1000.0)
+            + self.weights["gamma"] * loss_residual
             + self.weights["delta"] * instability
             + self.weights["epsilon"] * reliability_penalty
             + 0.001
