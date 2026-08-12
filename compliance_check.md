@@ -97,6 +97,45 @@ research question is *when to reroute and how to avoid instability*, not *capaci
 of a specific flow's demand*. Worth stating explicitly as a limitation/future-work item rather than
 leaving it implicit.
 
+**Known limitation (found 2026-08-12, delay unfixed / loss fixed): delay_ms and packet_loss had no
+real data source anywhere in the monitor pipeline.** `grep -rn "delay_ms=" src/` returned zero
+matches before this pass — nothing in `src/` ever assigned it a value; `StatisticsCollector.
+aggregate_link_statistics()` (the function that builds `LinkStatistics` from real OVS data) never
+passed `packet_loss` either, so both fields silently defaulted to `None`. `GraphBuilder.
+_calculate_edge_cost()` treats `None` as `0.0`, meaning in a genuine live deployment (not the
+offline simulation, which fabricates these values directly) **β and γ's terms would always evaluate
+to zero** — utilization was the only signal actually driving routing decisions. Two different root
+causes, two different outcomes:
+- **packet_loss — fixed.** Real `ovs-ofctl dump-ports` output carries a `drop=` counter on both the
+  rx and tx lines (confirmed against a live OVS bridge), which `parse_ovs_port_stats()` simply never
+  parsed. Now parses it, and `StatisticsCollector.calculate_loss_rate()` (`tx_dropped /
+  (tx_packets + tx_dropped)`) feeds a real loss rate into `aggregate_link_statistics()`. Covered by
+  `tests/statistics_collector.py`.
+- **delay_ms — still unfixed, harder problem.** Port byte/packet counters cannot yield a latency
+  measurement; that needs a different mechanism entirely (active probing, e.g. periodic ping-based
+  RTT, or in-band network telemetry), which doesn't exist anywhere in this project. Documented here
+  as an open limitation rather than implemented, given the added complexity and system load risk of
+  active probing infrastructure relative to this project's scope.
+
+Separately, the *offline simulation's* `experiments/simulation_common.py::set_link_condition()` had
+its own, independent version of this problem: every pilot scenario only ever passed `utilization=`
+(never `delay_bump_ms`/`loss_bump`), so delay/loss stayed completely flat regardless of how
+congested the simulated link became — unrealistic, since utilization/delay/loss are correlated
+symptoms of the same congestion in a real network, not independent quantities. Fixed 2026-08-12:
+delay/loss are now derived from current utilization via `congestion_delay_bump_ms()` (M/M/1-inspired
+queueing delay, grows as `utilization/(1-utilization)`) and `congestion_loss_bump()` (near-zero below
+70% utilization, then rises quadratically) — chosen, documented models, not universal laws.
+
+**A consequence worth flagging explicitly: this makes the additive cost formula double-count the
+same congestion signal.** Once delay and loss are functions of utilization, `∂cost/∂u = α +
+β·(∂delay/∂u)/1000 + γ·(∂loss/∂u)`, not just α. Evaluated near u=0.9 at the current default weights:
+0.4 (direct) + 0.24 (via delay) + 0.044 (via loss) = 0.684 total — utilization's real influence on
+cost is ~1.7x the α term alone, because delay and loss are re-punishing the same underlying signal
+they're derived from. This is a real form of multicollinearity in the cost formula, not fixed as
+part of this pass (would require re-deriving the formula to weight residuals — the part of delay/loss
+*not* explained by utilization — rather than raw values). Recorded here as a known, quantified
+limitation for the same reason as the ones above: better to state it than leave it implicit.
+
 ---
 
 ### E. Stability Mechanisms ✅

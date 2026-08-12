@@ -72,21 +72,69 @@ def build_network_state(output_dir: Path, seed: int = 0, base_utilization: float
     return state
 
 
+BASELINE_DELAY_MS = 6.0
+BASELINE_LOSS = 0.001
+
+
+def congestion_delay_bump_ms(utilization: float, scale_ms: float = 8.0) -> float:
+    """
+    M/M/1-inspired queueing delay: grows as utilization/(1-utilization), which
+    diverges near saturation -- a real, well-known queueing-theory shape, but
+    a *chosen* model (a different queueing discipline, buffer size, or
+    scheduling policy would give a different curve), not a universal law.
+    """
+    u = min(max(utilization, 0.0), 0.99)  # clamp so 1/(1-u) never divides by zero
+    return scale_ms * (u / (1.0 - u))
+
+
+def congestion_loss_bump(utilization: float, onset: float = 0.7, scale: float = 0.05) -> float:
+    """
+    Loss stays ~0 below `onset` (buffers absorb bursts up to that point), then
+    rises quadratically toward `scale` as utilization approaches 1 -- a common
+    simplified heuristic for finite-buffer overflow probability near
+    saturation, not derived from a specific queueing model like the delay
+    curve above.
+    """
+    excess = max(0.0, utilization - onset)
+    return scale * (excess / (1.0 - onset)) ** 2
+
+
 def set_link_condition(
     state: NetworkState,
     link_id_str: str,
     utilization: Optional[float] = None,
     status: Optional[str] = None,
     timestamp: Optional[datetime] = None,
-    delay_bump_ms: float = 0.0,
-    loss_bump: float = 0.0,
+    delay_bump_ms: Optional[float] = None,
+    loss_bump: Optional[float] = None,
 ) -> None:
-    """Overwrite one link's live statistics, preserving whatever isn't specified."""
+    """
+    Overwrite one link's live statistics, preserving whatever isn't specified.
+
+    delay_ms/packet_loss are derived fresh from the *current* utilization via
+    congestion_delay_bump_ms()/congestion_loss_bump() by default -- previously
+    delay_bump_ms/loss_bump defaulted to 0.0 and every real call site in this
+    project only ever passed utilization=, which left delay/loss completely
+    flat regardless of how congested a link became. That wasn't realistic
+    (utilization/delay/loss aren't independent in a real network -- they're
+    different symptoms of the same congestion) and meant beta/gamma (the
+    delay/loss cost weights) had no real signal to respond to in any pilot
+    scenario. Pass delay_bump_ms/loss_bump explicitly to bypass this and set
+    an exact value instead (e.g. injecting an isolated, non-congestion event).
+    """
     old = state.get_link_stats(link_id_str)
     resolved_utilization = utilization if utilization is not None else (float(old.utilization) if old else 0.2)
     resolved_status = status if status is not None else (old.status if old else "up")
-    base_delay = float(old.delay_ms) if old and old.delay_ms else 6.0
-    base_loss = float(old.packet_loss) if old and old.packet_loss else 0.001
+
+    if delay_bump_ms is not None or loss_bump is not None:
+        base_delay = float(old.delay_ms) if old and old.delay_ms else BASELINE_DELAY_MS
+        base_loss = float(old.packet_loss) if old and old.packet_loss else BASELINE_LOSS
+        resolved_delay = base_delay + (delay_bump_ms or 0.0)
+        resolved_loss = base_loss + (loss_bump or 0.0)
+    else:
+        resolved_delay = BASELINE_DELAY_MS + congestion_delay_bump_ms(resolved_utilization)
+        resolved_loss = BASELINE_LOSS + congestion_loss_bump(resolved_utilization)
+
     state.update_link_statistics(
         LinkStatistics(
             timestamp=timestamp or datetime.now(),
@@ -95,8 +143,8 @@ def set_link_condition(
             rx_mbps=round(20.0 + resolved_utilization * 80.0, 4),
             tx_mbps=round(18.0 + resolved_utilization * 75.0, 4),
             status=resolved_status,
-            delay_ms=round(base_delay + delay_bump_ms, 4),
-            packet_loss=round(min(0.3, base_loss + loss_bump), 6),
+            delay_ms=round(resolved_delay, 4),
+            packet_loss=round(min(0.3, resolved_loss), 6),
         )
     )
     if status is not None:

@@ -76,11 +76,17 @@ class StatisticsCollector:
         current_port = None
         rx_packets = 0
         rx_bytes = 0
+        rx_dropped = 0
         timestamp = datetime.now()
 
         for line in output.splitlines():
+            # Real `ovs-ofctl dump-ports` output includes a drop= counter on
+            # both the rx and tx lines (verified against a live OVS bridge,
+            # e.g. "rx pkts=0, bytes=0, drop=0, errs=0, frame=0, over=0,
+            # crc=0") -- previously unparsed, so packet_loss had no real data
+            # source anywhere in this pipeline and always defaulted to None.
             port_match = re.search(
-                r"port\s+(\d+):\s+rx pkts=(\d+), bytes=(\d+)",
+                r"port\s+(\d+):\s+rx pkts=(\d+), bytes=(\d+), drop=(\d+)",
                 line,
             )
 
@@ -88,12 +94,14 @@ class StatisticsCollector:
                 current_port = int(port_match.group(1))
                 rx_packets = int(port_match.group(2))
                 rx_bytes = int(port_match.group(3))
+                rx_dropped = int(port_match.group(4))
                 continue
 
-            tx_match = re.search(r"tx pkts=(\d+), bytes=(\d+)", line)
+            tx_match = re.search(r"tx pkts=(\d+), bytes=(\d+), drop=(\d+)", line)
             if tx_match and current_port is not None:
                 tx_packets = int(tx_match.group(1))
                 tx_bytes = int(tx_match.group(2))
+                tx_dropped = int(tx_match.group(3))
 
                 stats = PortStatistics(
                     timestamp=timestamp,
@@ -103,6 +111,8 @@ class StatisticsCollector:
                     rx_bytes=rx_bytes,
                     tx_packets=tx_packets,
                     tx_bytes=tx_bytes,
+                    rx_dropped=rx_dropped,
+                    tx_dropped=tx_dropped,
                 )
                 records.append(stats)
                 current_port = None
@@ -167,6 +177,8 @@ class StatisticsCollector:
                 tx_bytes=stats.tx_bytes,
                 rx_mbps=max(rx_mbps, 0.0),
                 tx_mbps=max(tx_mbps, 0.0),
+                rx_dropped=stats.rx_dropped,
+                tx_dropped=stats.tx_dropped,
             )
             result.append(updated_stats)
 
@@ -194,7 +206,21 @@ class StatisticsCollector:
         traffic_rate = max(port_stats.rx_mbps, port_stats.tx_mbps)
         
         return min(traffic_rate / capacity, 1.0)
-    
+
+    def calculate_loss_rate(self, port_stats: PortStatistics) -> float:
+        """
+        Real packet loss rate for a port, from OVS's own drop counters
+        (rx_dropped/tx_dropped -- see parse_ovs_port_stats). Uses the tx side
+        (packets this port tried to send out that were dropped, e.g. from
+        queue overflow) since that's the direct signal of egress congestion
+        on this link; rx_dropped reflects drops on the *other* interface's
+        send path, not this one's.
+        """
+        attempted = port_stats.tx_packets + port_stats.tx_dropped
+        if attempted <= 0:
+            return 0.0
+        return min(port_stats.tx_dropped / attempted, 1.0)
+
     def aggregate_link_statistics(
         self,
         port_stats_list: List[PortStatistics],
@@ -221,7 +247,8 @@ class StatisticsCollector:
             
             link_id, is_direction_a = link_info
             utilization = self.calculate_utilization(port_stats)
-            
+            loss_rate = self.calculate_loss_rate(port_stats)
+
             if link_id not in link_stats:
                 # Initialize new link statistics
                 link_stats[link_id] = LinkStatistics(
@@ -231,10 +258,15 @@ class StatisticsCollector:
                     rx_mbps=port_stats.rx_mbps,
                     tx_mbps=port_stats.tx_mbps,
                     status="up",
+                    packet_loss=loss_rate,
                 )
             else:
-                # Update existing link stats - combine both directions
+                # Update existing link stats - combine both directions.
+                # packet_loss takes the worse (max) of the two ports' loss
+                # rates, same reasoning as utilization: either end dropping
+                # packets means the link is lossy.
                 existing = link_stats[link_id]
+                existing_loss = existing.packet_loss if existing.packet_loss is not None else 0.0
                 link_stats[link_id] = LinkStatistics(
                     timestamp=port_stats.timestamp,
                     link_id=link_id,
@@ -242,8 +274,9 @@ class StatisticsCollector:
                     rx_mbps=existing.rx_mbps + port_stats.rx_mbps,
                     tx_mbps=existing.tx_mbps + port_stats.tx_mbps,
                     status="up",
+                    packet_loss=max(existing_loss, loss_rate),
                 )
-        
+
         return list(link_stats.values())
 
     def save_to_csv(

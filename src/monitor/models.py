@@ -19,6 +19,11 @@ class PortStatistics:
     tx_bytes: int
     rx_mbps: float = 0.0
     tx_mbps: float = 0.0
+    # OVS's own drop counters (the "drop=" field `ovs-ofctl dump-ports`
+    # reports on both the rx and tx lines) -- real, available data that
+    # wasn't being parsed at all until this field was added.
+    rx_dropped: int = 0
+    tx_dropped: int = 0
 
 
 @dataclass
