@@ -367,6 +367,16 @@ class DecisionEngine:
         self.stability.record_reroute(pair, emergency=emergency, now=now)
         self.flow_installer.install_path(candidate_path)
 
+        # Record churn for every link that changed (added to or dropped from
+        # the installed path) -- feeds GraphBuilder's instability/churn cost
+        # term (formerly the dead "priority" slot), so a link that keeps
+        # getting swapped in/out looks less attractive on the *next*
+        # comparison, not just gated by the timing mechanisms above.
+        old_links = {self._link_id(u, v) for u, v in zip(current_path, current_path[1:])}
+        new_links = {self._link_id(u, v) for u, v in zip(candidate_path, candidate_path[1:])}
+        for link_id in old_links.symmetric_difference(new_links):
+            self.network_state.record_link_churn(link_id, timestamp=now)
+
         return {
             "type": "reroute",
             "src": pair[0],

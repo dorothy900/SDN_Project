@@ -11,6 +11,7 @@ from typing import Dict, Optional, List
 from .link_monitor import LinkMonitor
 from .topology_state import TopologyState
 from .history_store import HistoryStore
+from .link_churn_tracker import LinkChurnTracker
 from .models import LinkStatistics
 
 
@@ -28,12 +29,21 @@ class NetworkState:
     ):
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         self.topology = TopologyState()
         self.link_monitor = LinkMonitor(output_dir=output_dir)
         self.history = HistoryStore(window_size=history_window_size, output_dir=output_dir)
-        
+        self.link_churn = LinkChurnTracker()
+
         self.last_update_time: Optional[datetime] = None
+
+    def record_link_churn(self, link_id: str, timestamp: Optional[float] = None) -> None:
+        """Record that a link was just added to or removed from an installed path."""
+        self.link_churn.record_change(link_id, now=timestamp)
+
+    def get_link_churn_score(self, link_id: str) -> float:
+        """Normalized [0.0, 1.0] instability score -- see LinkChurnTracker."""
+        return self.link_churn.get_churn_score(link_id)
     
     def update_link_statistics(self, link_stats: LinkStatistics) -> None:
         """

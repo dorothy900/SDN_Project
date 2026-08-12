@@ -266,15 +266,25 @@ class SensitivityAnalysis:
         Sweep alpha/beta/gamma individually (holding the other two at their
         current defaults) against the three contrasting paths, then run
         delta and epsilon as separate isolation checks rather than folding
-        them into the same grid: reading _calculate_edge_cost
-        (src/routing/graph_builder.py) shows `priority` is a hardcoded local
-        0.0, never read from TrafficPolicy or anywhere else -- so delta's
-        term is structurally always zero regardless of its value, which a
-        grid sweep alongside alpha/beta/gamma would only show as "no effect"
-        without explaining why. epsilon's reliability_penalty only becomes
-        non-zero if a link's LinkStatistics.status is "down" while the edge
-        is *still present* in the active graph -- which happens if code
-        calls update_link_statistics(status="down") without also calling
+        them into the same grid.
+
+        delta's term used to be a hardcoded-zero "priority" placeholder,
+        structurally inert regardless of its value -- fixed 2026-08-12:
+        _calculate_edge_cost now multiplies delta by a real per-link
+        instability/churn score (NetworkState.get_link_churn_score(),
+        recorded by DecisionEngine._execute_reroute() every time a reroute
+        actually happens -- see tests/graph_builder.py for a test that
+        proves this now moves cost). The isolation sweep below still shows
+        delta as "no effect" for a *different*, more mundane reason: this
+        test's NetworkState is freshly built each run via
+        _build_contrast_state() with no reroute history, so every link's
+        churn score is 0.0 regardless of delta's value -- there's simply
+        nothing to react to here, not a dead weight.
+
+        epsilon's reliability_penalty only becomes non-zero if a link's
+        LinkStatistics.status is "down" while the edge is *still present* in
+        the active graph -- which happens if code calls
+        update_link_statistics(status="down") without also calling
         set_link_status()/mark_link_failed() (the two are tracked
         separately, see NetworkState). Properly failing a link instead
         removes its edge from the graph entirely, making epsilon moot for
@@ -497,13 +507,19 @@ class SensitivityAnalysis:
                 lines.append("")
 
         if delta_rows:
-            lines.append("## delta (priority weight) -- isolation check")
+            lines.append("## delta (link instability/churn weight) -- isolation check")
             lines.append(
-                "`_calculate_edge_cost` (src/routing/graph_builder.py) sets `priority = 0.0` as a hardcoded "
-                "local variable -- it is never read from TrafficPolicy or anywhere else that carries a real "
-                "priority signal. So delta's contribution to cost is structurally alpha*0 = 0 regardless of "
-                "delta's value. Swept 0.0 -> 1.0 against the same three contrasting paths to confirm this "
-                "empirically, not just from reading the code:"
+                "As of 2026-08-12, `_calculate_edge_cost` (src/routing/graph_builder.py) multiplies delta "
+                "by a real per-link churn score (NetworkState.get_link_churn_score(), recorded by "
+                "DecisionEngine._execute_reroute() whenever a reroute actually happens) -- this replaced the "
+                "previous hardcoded-zero \"priority\" placeholder, which was structurally inert regardless of "
+                "delta's value (priority is a per-flow concept, not a link-level one, so it never fit this "
+                "shared graph cleanly; churn is a genuine link-level property, so it does). The sweep below "
+                "still shows identical costs across the whole delta grid -- but that's expected here, not a "
+                "sign delta is dead: this sweep's NetworkState is built fresh each run "
+                "(_build_contrast_state()) with no reroute history, so every link's churn score is 0.0 no "
+                "matter what delta is set to. See tests/graph_builder.py for a test against a NetworkState "
+                "with actual recorded churn, which does show delta moving cost."
             )
             lines.append("")
             for row in delta_rows:
@@ -514,9 +530,8 @@ class SensitivityAnalysis:
             delta_costs_identical = len({(r["cost_A"], r["cost_B"], r["cost_C"]) for r in delta_rows}) == 1
             lines.append("")
             lines.append(
-                "- All four costs identical across the entire delta grid: %s (confirms delta is currently "
-                "inert -- not a bug in this sweep, a real gap: priority-aware path *cost* was never wired up, "
-                "separate from the priority-aware *reroute timing* that traffic_policy.py does implement)."
+                "- All four costs identical across the entire delta grid: %s (expected -- zero churn history "
+                "in this fresh, isolated test state, not delta being inert; see note above)."
                 % delta_costs_identical
             )
             lines.append("")

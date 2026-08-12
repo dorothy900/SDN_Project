@@ -75,11 +75,11 @@ path_cost_weights:
   alpha: 0.4    # Utilization weight
   beta: 0.3     # Delay weight
   gamma: 0.2    # Loss weight
-  delta: 0.05   # Priority weight
+  delta: 0.05   # Link instability/churn weight (was "priority" until 2026-08-12, see below)
   epsilon: 0.05 # Reliability weight
 ```
 
-**Formula**: Cost = α·Utilization + β·Delay + γ·Loss + δ·Priority + ε·Reliability  
+**Formula**: Cost = α·Utilization + β·Delay + γ·Loss + δ·Link-instability + ε·Reliability  
 **Implementation Location**: [`src/decision/path_cost.py`](file:///home/vboxuser/sdn-project/src/decision/path_cost.py) — implemented and unit-tested (`tests/path_cost.py`, `results/decision_engine/path_cost_unit_tests.txt`)
 
 **Known limitation (identified 2026-08-11, not fixed): no self-influence / offered-load accounting.**
@@ -135,6 +135,24 @@ they're derived from. This is a real form of multicollinearity in the cost formu
 part of this pass (would require re-deriving the formula to weight residuals — the part of delay/loss
 *not* explained by utilization — rather than raw values). Recorded here as a known, quantified
 limitation for the same reason as the ones above: better to state it than leave it implicit.
+
+**Fixed 2026-08-12: δ's cost term repurposed from a dead "priority" placeholder to a real link
+instability/churn signal.** `_calculate_edge_cost` previously multiplied δ by a hardcoded local
+`priority = 0.0`, never connected to anything — structurally inert regardless of δ's value.
+Priority doesn't fit this formula cleanly anyway: it's inherently a per-flow concept (VoIP vs. Web
+vs. File Transfer), but `GraphBuilder` builds one shared graph for every flow, so there was no
+natural per-link "priority" value to plug in without building a separate graph per service type (a
+bigger change, and arguably redundant with `TrafficPolicy`'s existing per-service effective
+thresholds at the decision layer). δ now multiplies a genuine link-level property instead: how
+often a link has recently been added to or removed from an installed path
+(`NetworkState`/`LinkChurnTracker.get_link_churn_score()`, a rolling-window count in the same style
+`ChangeBudget` already uses), recorded at the single choke point every real reroute passes through
+(`DecisionEngine._execute_reroute()`). This is complementary to, not redundant with, the existing
+timing gates (persistence/hold-down/change budget) — those control *when* a reroute is allowed;
+this makes recently-churned links look less attractive in the *cost comparison itself*, discouraging
+oscillation back onto a link that was just swapped out. Covered by `tests/link_churn_tracker.py`
+and `tests/graph_builder.py`; full pytest suite (60/60) and `experiment.py --stage 1`–`6` re-verified
+after the change.
 
 ---
 

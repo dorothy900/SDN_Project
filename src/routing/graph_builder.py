@@ -39,7 +39,7 @@ class GraphBuilder:
         for u, v in sorted(graph.edges(), key=self._canonical_edge):
             link_id = self._get_link_id(u, v)
             stats = self.network_state.get_link_stats(link_id)
-            graph[u][v]["weight"] = self._calculate_edge_cost(stats)
+            graph[u][v]["weight"] = self._calculate_edge_cost(stats, link_id)
             graph[u][v]["link_id"] = link_id
 
         return graph
@@ -141,22 +141,35 @@ class GraphBuilder:
                     return selected
         return selected
 
-    def _calculate_edge_cost(self, link_stats) -> float:
-        """Translate the dissertation cost function into a single edge weight."""
+    def _calculate_edge_cost(self, link_stats, link_id: str) -> float:
+        """
+        Translate the dissertation cost function into a single edge weight.
+
+        delta's term was "priority", hardcoded to 0.0 (a dead weight -- never
+        connected to anything, since priority is inherently a per-flow
+        concept and this graph is shared across all flows). Replaced
+        2026-08-12 with a per-link instability/churn score instead: how
+        often this link has recently been added to or removed from an
+        installed path (NetworkState.get_link_churn_score(), fed by
+        DecisionEngine._execute_reroute() every time a reroute actually
+        happens). Unlike priority, this is a genuine link-level property, so
+        it fits the one-shared-graph design without needing a separate graph
+        per flow/service type.
+        """
         if link_stats is None:
             return 1.0
 
         utilization = float(link_stats.utilization)
         delay = (float(link_stats.delay_ms) / 1000.0) if link_stats.delay_ms is not None else 0.0
         loss = float(link_stats.packet_loss) if link_stats.packet_loss is not None else 0.0
-        priority = 0.0
+        instability = self.network_state.get_link_churn_score(link_id)
         reliability_penalty = 0.0 if link_stats.status == "up" else 1.0
 
         return (
             self.weights["alpha"] * utilization
             + self.weights["beta"] * delay
             + self.weights["gamma"] * loss
-            + self.weights["delta"] * priority
+            + self.weights["delta"] * instability
             + self.weights["epsilon"] * reliability_penalty
             + 0.001
         )
