@@ -45,6 +45,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from mininet.net import Mininet
 from mininet.node import OVSSwitch
+from mininet.link import TCLink
 from mininet.log import setLogLevel
 
 from topology import GeantTopology
@@ -89,7 +90,12 @@ def main() -> None:
     # instead, which also fits this project's actual design (no reliance on
     # switch auto-learning, only explicit pushed rules). ARP is unaffected
     # since both test hosts get static ARP entries below.
-    net = Mininet(topo=topo, switch=lambda name, **kw: OVSSwitch(name, failMode="secure", **kw), controller=None)
+    net = Mininet(
+        topo=topo,
+        switch=lambda name, **kw: OVSSwitch(name, failMode="secure", **kw),
+        link=TCLink,
+        controller=None,
+    )
     output_dir = PROJECT_ROOT / "results" / "mininet_check"
     output_dir.mkdir(parents=True, exist_ok=True)
     installed_rules: list[str] = []

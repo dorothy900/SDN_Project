@@ -97,7 +97,7 @@ research question is *when to reroute and how to avoid instability*, not *capaci
 of a specific flow's demand*. Worth stating explicitly as a limitation/future-work item rather than
 leaving it implicit.
 
-**Known limitation (found 2026-08-12, delay unfixed / loss fixed): delay_ms and packet_loss had no
+**Known limitation (found 2026-08-12, both now fixed): delay_ms and packet_loss had no
 real data source anywhere in the monitor pipeline.** `grep -rn "delay_ms=" src/` returned zero
 matches before this pass — nothing in `src/` ever assigned it a value; `StatisticsCollector.
 aggregate_link_statistics()` (the function that builds `LinkStatistics` from real OVS data) never
@@ -105,17 +105,38 @@ passed `packet_loss` either, so both fields silently defaulted to `None`. `Graph
 _calculate_edge_cost()` treats `None` as `0.0`, meaning in a genuine live deployment (not the
 offline simulation, which fabricates these values directly) **β and γ's terms would always evaluate
 to zero** — utilization was the only signal actually driving routing decisions. Two different root
-causes, two different outcomes:
+causes, two different fixes:
 - **packet_loss — fixed.** Real `ovs-ofctl dump-ports` output carries a `drop=` counter on both the
   rx and tx lines (confirmed against a live OVS bridge), which `parse_ovs_port_stats()` simply never
   parsed. Now parses it, and `StatisticsCollector.calculate_loss_rate()` (`tx_dropped /
   (tx_packets + tx_dropped)`) feeds a real loss rate into `aggregate_link_statistics()`. Covered by
   `tests/statistics_collector.py`.
-- **delay_ms — still unfixed, harder problem.** Port byte/packet counters cannot yield a latency
-  measurement; that needs a different mechanism entirely (active probing, e.g. periodic ping-based
-  RTT, or in-band network telemetry), which doesn't exist anywhere in this project. Documented here
-  as an open limitation rather than implemented, given the added complexity and system load risk of
-  active probing infrastructure relative to this project's scope.
+- **delay_ms — fixed via active probing.** Port byte/packet counters cannot yield a latency
+  measurement, so this needed a different mechanism: `src/monitor/delay_prober.py` parses real
+  `ping` RTT output into a one-way link-delay estimate (subtract known host-link overhead, halve —
+  Mininet's `TCLink` applies the same `tc netem` delay symmetrically to both directions of a link,
+  confirmed via `inspect.getsource(TCLink.__init__)`); `scripts/mininet_delay_measurement.py`
+  installs temporary explicit OpenFlow rules to force host-to-host traffic across exactly one real
+  GEANT link at a time, pings, and writes the measured value into a real `NetworkState`/
+  `LinkStatistics` record — the same pipeline `StatisticsCollector` feeds, not a disconnected
+  number. Verified live on the full 40-switch topology: 61/61 real GEANT links measured
+  successfully, average one-way delay 12.28ms against a configured 10ms per inter-switch link (the
+  ~2ms gap is real queueing/htb overhead, not simulation noise). Unit-tested in
+  `tests/delay_prober.py` (pure parsing logic, no Mininet dependency).
+
+**Bug found and fixed while building the above (2026-08-12): `link=TCLink` was missing from every
+`Mininet()` constructor call in this project.** `topology.py`'s `addLink(..., bw=100, delay=...)`
+calls only take effect if `Mininet()` is built with `link=TCLink`; without it, Mininet silently uses
+plain, unshaped `Link` (no bandwidth cap, no delay) and the `bw=`/`delay=` parameters are discarded.
+Caught by diagnosing why every link's measured delay came back exactly 0.0ms on the first live run —
+`tc qdisc show dev <intf>` on a switch interface showed `qdisc noqueue` (nothing installed) instead
+of a `netem` qdisc. This affected all three Mininet orchestration scripts (`mininet_path_
+verification.py`, `mininet_failure_recovery_demo.py`, `mininet_delay_measurement.py`), meaning every
+prior real-network experiment in this project ran on ideal (0ms, unlimited-bandwidth) links despite
+`topology.py` claiming otherwise. All three now pass `link=TCLink` and were re-run to confirm
+results still hold: path verification's 4-hop ping now shows a real ~70ms RTT (previously would have
+been near-zero); the failure-recovery demo's before/after/recovery pings and path decisions are
+unchanged in outcome (still SUCCESS / SUCCESS / path restored), now over genuinely shaped links.
 
 Separately, the *offline simulation's* `experiments/simulation_common.py::set_link_condition()` had
 its own, independent version of this problem: every pilot scenario only ever passed `utilization=`
