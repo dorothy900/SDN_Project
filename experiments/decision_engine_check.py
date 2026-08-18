@@ -24,6 +24,7 @@ from src.decision.persistence_checker import PersistenceChecker
 from src.decision.threshold_detector import ThresholdDetector, ThresholdViolation
 from src.monitor.models import LinkStatistics
 from src.monitor.network_state import NetworkState
+from src.routing.congestion_model import predicted_delay_ms, predicted_loss
 from src.routing.graph_builder import GraphBuilder
 
 
@@ -167,8 +168,8 @@ class DecisionEngineValidation:
         """Day 3: validate that safer path metrics produce a lower composite cost."""
         congested_path = candidate_paths[0]
         safer_path = candidate_paths[1]
-        self._set_path_metrics(state, congested_path, utilization=0.84, delay_ms=24.0, packet_loss=0.018)
-        self._set_path_metrics(state, safer_path, utilization=0.02, delay_ms=1.0, packet_loss=0.0001)
+        self._set_path_metrics(state, congested_path, utilization=0.84, delay_ms=predicted_delay_ms(0.84), packet_loss=predicted_loss(0.84))
+        self._set_path_metrics(state, safer_path, utilization=0.02, delay_ms=predicted_delay_ms(0.02), packet_loss=predicted_loss(0.02))
 
         calculator = PathCost(state)
         congested_cost = calculator.calculate_path_cost(congested_path)
@@ -208,8 +209,8 @@ class DecisionEngineValidation:
         calculator = PathCost(state)
         rows = []
 
-        self._set_path_metrics(state, current_path, utilization=0.80, delay_ms=22.0, packet_loss=0.016)
-        self._set_path_metrics(state, small_gain_path, utilization=0.25, delay_ms=10.0, packet_loss=0.005)
+        self._set_path_metrics(state, current_path, utilization=0.80, delay_ms=predicted_delay_ms(0.80), packet_loss=predicted_loss(0.80))
+        self._set_path_metrics(state, small_gain_path, utilization=0.25, delay_ms=predicted_delay_ms(0.25), packet_loss=predicted_loss(0.25))
         comparison = calculator.compare_paths(current_path, small_gain_path)
         rows.append(
             {
@@ -223,8 +224,8 @@ class DecisionEngineValidation:
             }
         )
 
-        self._set_path_metrics(state, current_path, utilization=0.80, delay_ms=22.0, packet_loss=0.016)
-        self._set_path_metrics(state, strong_gain_path, utilization=0.08, delay_ms=5.0, packet_loss=0.001)
+        self._set_path_metrics(state, current_path, utilization=0.80, delay_ms=predicted_delay_ms(0.80), packet_loss=predicted_loss(0.80))
+        self._set_path_metrics(state, strong_gain_path, utilization=0.08, delay_ms=predicted_delay_ms(0.08), packet_loss=predicted_loss(0.08))
         comparison = calculator.compare_paths(current_path, strong_gain_path)
         rows.append(
             {
@@ -264,8 +265,8 @@ class DecisionEngineValidation:
             engine.logger.log_no_action("Normal traffic remains below threshold")
 
         # Sustained congestion with insufficient gain.
-        self._set_path_metrics(state, current_path, utilization=0.83, delay_ms=21.0, packet_loss=0.017)
-        self._set_path_metrics(state, low_gain_path, utilization=0.25, delay_ms=10.0, packet_loss=0.005)
+        self._set_path_metrics(state, current_path, utilization=0.83, delay_ms=predicted_delay_ms(0.83), packet_loss=predicted_loss(0.83))
+        self._set_path_metrics(state, low_gain_path, utilization=0.25, delay_ms=predicted_delay_ms(0.25), packet_loss=predicted_loss(0.25))
         low_gain_violation = ThresholdViolation(
             link_id=self._link_id(current_path[0], current_path[1]),
             metric="utilization",
@@ -276,7 +277,7 @@ class DecisionEngineValidation:
         engine.evaluate_pair(pair[0], pair[1], current_path, low_gain_path, low_gain_violation)
 
         # Sustained congestion with strong candidate path.
-        self._set_path_metrics(state, good_path, utilization=0.08, delay_ms=5.0, packet_loss=0.001)
+        self._set_path_metrics(state, good_path, utilization=0.08, delay_ms=predicted_delay_ms(0.08), packet_loss=predicted_loss(0.08))
         strong_violation = ThresholdViolation(
             link_id=self._link_id(current_path[0], current_path[1]),
             metric="utilization",

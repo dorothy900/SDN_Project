@@ -495,6 +495,50 @@ the test VM's achievable throughput, whatever it tops out at, actually exceeds
 that link's capacity) rather than assuming request-rate overshoot alone forces
 saturation.
 
+### Refitting scale_ms, and a real bug that refit caused (2026-08-12)
+
+Acted on the `delay_residual` finding above: refit `congestion_delay_bump_ms`'s
+`scale_ms` by ordinary least squares against the 60 real samples
+(`delay - BASELINE_DELAY_MS = scale_ms * u/(1-u)`), giving `scale_ms=113.603`
+(was 8.0, hand-picked). On the same 60 samples this dropped the residual-vs-
+utilization Pearson correlation from 0.495 to -0.084 — close to fully decorrelated,
+within the range the data actually covers.
+
+**That range is the catch: the 60 samples never exceeded ~0.55 achieved
+utilization** (the same generation-ceiling limitation noted above), so the fit
+has zero real evidence past that point. `u/(1-u)` diverges hyperbolically as
+u→1, and with a scale_ms 14x larger than before, extrapolating the old clamp
+(0.99) out to the full range produced absurd predicted delays — 1028ms at
+u=0.9, 11253ms at u=0.99. Applying this directly broke `tests/
+baseline_comparison_integration.py`: a background link's real (small) delay
+value fell far enough below this inflated prediction at high utilization that
+`delay_residual_ms` was large and negative, dragging the whole edge's cost
+below zero — `networkx`'s Dijkstra correctly raised `ValueError("Contradictory
+paths found: negative weights?")` rather than silently computing a wrong
+shortest path.
+
+**Two fixes, addressing two different problems:**
+- `congestion_delay_bump_ms` now clamps its utilization input at
+  `MAX_UTILIZATION_FOR_EXTRAPOLATION = 0.6` (just above the real data's range)
+  instead of 0.99 — past that point the predicted delay holds at the u=0.6
+  plateau (176.4ms) rather than continuing to extrapolate into untested
+  territory. This fixes *this specific* cause, honestly, by refusing to trust
+  the fit where there's no evidence for it.
+- `GraphBuilder._calculate_edge_cost` now floors its return value at
+  `GraphBuilder.MIN_EDGE_COST` (0.001) regardless of the above. This is a
+  correctness fix, not a calibration one: an edge weight going negative is a
+  hard bug for any shortest-path algorithm, and beta/gamma's residual terms
+  are deliberately signed (rewarding better-than-predicted links, not just
+  refusing to penalize them further — see `_calculate_edge_cost`'s docstring),
+  so nothing about the cost formula's design prevents a large enough negative
+  residual from recurring under some *other* future curve or data combination.
+  The floor makes that structurally impossible rather than relying on every
+  future curve being well-behaved.
+
+Regression-tested: full suite passing (78/78) after both fixes, including the
+pre-existing `tests/graph_builder.py` residual-direction tests (unaffected,
+since they use utilization in the well-supported [0, 0.6] range).
+
 ---
 
 ## Final Verdict

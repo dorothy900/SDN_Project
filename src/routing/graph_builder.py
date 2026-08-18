@@ -18,6 +18,13 @@ from .congestion_model import predicted_delay_ms, predicted_loss
 class GraphBuilder:
     """Build weighted graphs from topology and the current network state."""
 
+    # A negative-weight edge is a hard correctness bug, not a calibration
+    # detail -- Dijkstra (used below and by PathCost/networkx) is undefined
+    # for negative weights. beta/gamma's residual terms are deliberately
+    # signed (see _calculate_edge_cost's docstring), so this floor is what
+    # keeps that design safe regardless of how any curve is calibrated.
+    MIN_EDGE_COST = 0.001
+
     def __init__(self, network_state: NetworkState, weights: Optional[Dict[str, float]] = None):
         self.network_state = network_state
         self.weights = weights or {
@@ -171,6 +178,18 @@ class GraphBuilder:
         predicts contributes zero extra cost from these two terms; residuals
         are signed, not clamped at zero, so a link doing *better* than its
         utilization predicts is rewarded, not just never penalized.
+
+        Because delay_residual_ms/loss_residual can be negative, the sum
+        below is floored at MIN_EDGE_COST rather than returned as-is (fixed
+        2026-08-12, after a real run: a background link's raw delay fell far
+        enough below congestion_model's prediction at high utilization that
+        the total went negative, and networkx's Dijkstra correctly raised
+        rather than silently misroute on a negative-weight graph). The floor
+        is a correctness property of this being an edge *weight*, not a
+        calibration fix -- it should hold regardless of how well-fit
+        congestion_model's curve is, since no amount of curve-fitting can
+        guarantee every real (delay, loss) sample stays within the model's
+        assumptions.
         """
         if link_stats is None:
             return 1.0
@@ -190,7 +209,7 @@ class GraphBuilder:
         instability = self.network_state.get_link_churn_score(link_id)
         reliability_penalty = 0.0 if link_stats.status == "up" else 1.0
 
-        return (
+        raw_cost = (
             self.weights["alpha"] * utilization
             + self.weights["beta"] * (delay_residual_ms / 1000.0)
             + self.weights["gamma"] * loss_residual
@@ -198,6 +217,7 @@ class GraphBuilder:
             + self.weights["epsilon"] * reliability_penalty
             + 0.001
         )
+        return max(raw_cost, self.MIN_EDGE_COST)
 
     def _get_link_id(self, u: str, v: str) -> str:
         nodes = sorted([str(u), str(v)])
