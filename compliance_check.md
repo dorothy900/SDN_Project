@@ -868,6 +868,107 @@ both not significant.
 
 ---
 
+## dCor coverage completed; delay-residual leftover investigated (2026-08-18)
+
+**Coverage gap closed:** the joint matrix above only used Spearman+VIF (per
+the redirect away from expensive pairwise dCor). Reused the same 90 samples
+to add dCor+permutation-test (4999 permutations) for all 10 pairs. Result:
+**no case where dCor found significance Spearman missed** — all 10 pairs
+agree on significance, including churn_score-reliability_down (Spearman
+p=0.743, dCor p=0.495, both not significant). The suspected coverage gap did
+not surface anything new.
+
+**Separately, on the real 60-sample delay dataset** (`results/independence_check/`),
+dCor on `utilization vs delay_residual` (current fitted curve, scale_ms=113.603)
+came back significant (dCor=0.351, p=0.013) even though Pearson (-0.084) and
+Spearman (-0.074, p=0.558) both read as decorrelated — a real case of dCor
+catching non-monotonic structure the other two miss.
+
+**Investigated three candidate explanations, in order:**
+
+1. **Parameter identifiability.** Tried freeing `BASELINE_DELAY_MS` (fixed at
+   6.0 in production) jointly with `scale_ms` via 2-parameter OLS on
+   `delay = a + b*u/(1-u)`. Got a=31.087, b=81.030 — but a is not physically
+   plausible (real low-utilization delay across all 3 links averages
+   11-13ms, not 31ms), and diagnostics confirm why: condition number 4.46,
+   correlation between the a,b estimates = **-0.889** (near-degenerate
+   trade-off), 95% CI for a = **[2.38, 59.79]** (too wide to mean anything).
+   The joint free-intercept fit is itself unreliable given this data's range
+   — not a case to build on.
+2. **Fix the identifiability bug properly, retest.** Two-stage estimate:
+   pin the intercept from the 12 real low-utilization samples alone (u<0.25,
+   where the queueing bump is ~0 by construction, so intercept isn't
+   confounded with scale) — baseline=12.301ms, physically sane — then fit
+   `scale_ms` alone via single-parameter OLS on the full 60 samples:
+   scale=105.422 (close to the original 113.603, confirming scale itself was
+   never the unstable part). Result: **Pearson/Spearman both improved
+   (-0.037, p=0.968) but dCor barely moved (0.351→0.359, still p=0.009)**.
+   The identifiability bug was real (confirmed via the diagnostics above)
+   but fixing it did not explain the residual dCor signal — ruled out as
+   the cause.
+3. **Heteroscedasticity and per-link effects, as remaining candidates.**
+   Residual std by utilization tercile: 41.4 / 58.7 / 46.5 — not a clean
+   monotonic increase (would indicate the queueing model's noise itself
+   scales with u, which dCor can detect but a mean-fit never removes).
+   Residual mean by link: s1-s2 -8.1ms, s13-s35 +15.5ms, s5-s6 +4.5ms,
+   against a per-link std of ~45-53ms and n=20/link — differences are
+   within noise, not a clean per-link fixed effect either. Neither
+   candidate gives a clean explanation.
+
+**Conclusion:** the ~0.35-0.36 dCor signal is not explained by the
+identifiability bug (fixed, signal persisted), nor cleanly by
+heteroscedasticity or a per-link offset (both checked, neither clean). Most
+consistent with genuine local curvature around u≈0.32-0.4 that a single
+global `u/(1-u)` shape underfits, but at n=60 (20/link) this can't be
+reliably separated from sampling noise. **Decided not to keep tuning the
+curve on a dataset this size — instead re-ran `scripts/mininet_
+independence_check.py` with `TRIALS_PER_LEVEL` raised 2→5 (60→150 real
+samples, 50/link instead of 20) to get the statistical power needed to tell
+whether this is real structure or noise.** Also added permutation-test
+p-values to the script's dCor output (previously reported the raw dCor value
+with no significance test — the gap that let the 0.53/0.63 values from
+earlier passes sit undocumented as "maybe interesting" instead of
+confirmed).
+
+**Result (150 real samples, 50/link vs the earlier 20/link):**
+
+```
+                                       n=60 (earlier)      n=150 (this run)
+utilization vs delay_residual:
+  Spearman  rho=-0.0743, p=0.5584      rho=-0.0347, p=0.6782   (not sig, both)
+  dCor       dCor=0.3505, p=0.0126      dCor=0.2827, p=0.0008   (sig, both)
+```
+
+**Reading:** the effect *shrank* (0.351→0.283) but got *more* statistically
+certain (p=0.013→0.0008), not less — the opposite of what a pure small-
+sample noise artifact would do (more data should push a noise-driven
+"finding" toward non-significance, not tighten its p-value while the
+estimate converges downward). This is the signature of a real, small,
+non-monotonic dependency between utilization and the delay residual: the
+n=60 estimate was somewhat inflated (dCor has a known small positive bias at
+low n), and n=150 is converging toward a smaller but genuine value around
+~0.28, not toward zero. **Conclusion: the identifiability investigation
+above was the right call to rule out — the residual signal is real, just
+modest in size, not a curve-fitting artifact.** Practical takeaway: this is
+a second-order effect (β's residual pricing is not perfectly clean, some
+non-monotonic utilization-dependence leaks through), worth knowing about but
+not worth further chasing with curve tweaks — the effect size (~0.28) is
+far below the raw utilization-delay dependency it's supposed to have
+removed (dCor=0.517 on this same 150-sample run), i.e. the residual design
+is still removing the large majority of the dependency, just not all of it.
+
+One numerical footnote from this run: `VIF(loss_residual) = 0.005` in the
+new report is **not a real VIF** (VIF is mathematically bounded below by 1)
+— it's a degenerate-input artifact. `loss` was 0.0 for all 150 samples
+(this environment's known achieved-utilization generation ceiling, ~0.55,
+never reaches the loss model's onset=0.7), so `loss_residual = 0 -
+predicted_loss(u) ≈ -0.001` is a near-constant column with ~zero variance;
+regressing a near-constant on the other variables produces numerically
+unstable output, not a meaningful collinearity statistic. Not a new bug,
+just worth flagging so this number is never read at face value.
+
+---
+
 ## Final Verdict
 
 **✅ Weeks 1–6 are implemented and passing (48/48 tests), Stage 6's comparative

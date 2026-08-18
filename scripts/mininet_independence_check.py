@@ -79,7 +79,14 @@ LINKS = [("s1", "s2"), ("s5", "s6"), ("s13", "s35")]
 # Requested send rate in Mbit, not "target utilization fraction" -- see
 # module docstring for why the top two intentionally exceed link capacity.
 REQUESTED_RATES_MBPS = [10, 20, 30, 40, 50, 60, 70, 85, 100, 130]
-TRIALS_PER_LEVEL = 2
+# 2 -> 5 trials/level (2026-08-18): the first pass (60 samples, n=20/link) left
+# a real, dCor-significant but unexplained residual signal after the
+# delay-curve refit (dCor=0.36, p=0.009) that survived ruling out both an
+# intercept-identifiability bug and an obvious per-link effect -- see
+# compliance_check.md. More real samples (not another curve tweak) is the
+# next actual lever: this triples n/link (20->50) to check whether that
+# signal is real leftover structure or shrinks toward noise with more power.
+TRIALS_PER_LEVEL = 5
 IPERF_DURATION_S = 8
 RANDOM_SEED = 42
 
@@ -248,8 +255,8 @@ def main() -> None:
             ("utilization vs delay_residual", u_vals, d_res),
             ("utilization vs loss_residual", u_vals, l_res),
         ]:
-            dcor = distance_correlation(x, y)
-            line = f"- {name}: dCor={dcor:.4f}"
+            dcor, dcor_p = permutation_test(x, y, statistic_fn=distance_correlation, n_permutations=9999, seed=RANDOM_SEED)
+            line = f"- {name}: dCor={dcor:.4f}, p={dcor_p:.4f}"
             print(f"*** {line}")
             report_lines.append(line)
 
