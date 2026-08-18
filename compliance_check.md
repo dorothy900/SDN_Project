@@ -107,14 +107,29 @@ like a strong improvement (accepted under the minimum-improvement gate) when its
 ignored can flip to rejected once that load is correctly priced in — the concrete failure mode this
 was about. Full suite 96/96 passing.
 
-**Still not wired into real deployment or offline scenario experiments** — the capability now exists
-and is unit-tested, but no caller currently passes a real per-flow `offered_load_utilization` value
-(existing scenario experiments in `experiments/*.py` all still call with the default `None`, so their
-recorded results are unaffected by this fix). Real traffic-engineering systems (e.g. MPLS-TE)
-typically get this value from admission-control reservation, which this project still does not
-implement — wiring a real flow's demand in (e.g. from `FlowDefinition.offered_load_mbps` in
-`experiments/traffic_generator.py`, converted to a utilization fraction via link capacity) is a
-natural follow-up, not done as part of this fix.
+**Wired into a real scenario the same day.** Added `simulation_common.py::
+resolve_offered_load_utilization(link_id, offered_load_mbps)`: converts a flow's real Mbit demand
+into a utilization fraction using the same real per-link GEANT bandwidth data `topology.py` resolves
+for the live Mininet deployment (`src/monitor/link_capacity.py`) — one real capacity source, not an
+arbitrary assumed one. `experiments/increasing_load.py` now uses this for `flow-video-1` (24Mbps, the
+real flow mapped onto `PRIMARY_PAIR` — see `simulation_common.py`'s `PRIMARY_PAIR` comment), setting
+`ProposedDriver.offered_load_utilization` before running the scenario.
+
+Verified live, directly comparing with/without on the same seeded run (sample 12, load=0.90): the
+real hotspot link resolves to 150Mbit real capacity (a real "10 Gbps" GEANT edge), so 24Mbps -> 0.16
+utilization. `PathCost.compare_paths` at that point: old_cost=0.5392 (current path `2->32->34->7`),
+new_cost without the fix=0.2709 (candidate `2->0->34->7`, accepted), new_cost with the fix (offered_
+load=0.16)=0.4259 (**still accepted** — margin survives, just smaller). Pushed further to find the
+actual flip point: new_cost=0.5400 at offered_load=0.30 (**rejected** — this specific candidate's
+margin over the current path was large enough that flow-video-1's real 24Mbps didn't flip the outcome
+this run, but a modestly larger flow, or the same flow on a lower-capacity link, does). Confirms the
+fix has real teeth in the actual decision pipeline, not just in `tests/path_cost.py`'s synthetic
+cases — this run's own outcome happens not to be one of the cases it flips.
+
+Other scenario experiments (`congestion.py`, `failure_recovery.py`, `stale_stats.py`,
+`priority_policy.py`) still call with the default `None` — extending this wiring to them is a natural
+follow-up, not done as part of this pass. Real traffic-engineering systems (e.g. MPLS-TE) typically
+get this value from admission-control reservation, which this project still does not implement.
 
 **Known limitation (found 2026-08-12, both now fixed): delay_ms and packet_loss had no
 real data source anywhere in the monitor pipeline.** `grep -rn "delay_ms=" src/` returned zero
@@ -772,6 +787,62 @@ utilization would predict in exactly these cases, producing large residuals
 that beta/gamma correctly price. Confirms the concern raised above is
 real but the formula's *existing* residual design already mitigates most of
 it — not a case that additionally needs fixing on its own.
+
+---
+
+## Joint independence matrix: correlation matrix (once) + VIF (2026-08-12)
+
+Redone at the user's request: rather than testing pairs one at a time across
+separate experiments (as above), `experiments/joint_independence_matrix.py`
+collects all 5 variables (utilization, delay, loss, delta/churn,
+epsilon/reliability) from ONE unified offline experiment (90 samples, 6 real
+GEANT pairs, randomized congestion/failure/recovery/quiet events via the
+real `ProposedDriver`/`DecisionEngine` — same method as the delta/epsilon
+check above, now also recording delay_ms/packet_loss), then computes a
+single Spearman correlation matrix and VIF once per variable (5 values) —
+joint, not just pairwise, dependency.
+
+**Necessary caveat:** utilization/delay/loss are generated together here via
+`congestion_model.py`'s real-data-fitted curve (`set_link_condition`'s
+default path), not measured on real Mininet traffic in this run — so
+utilization-delay and utilization-loss are correlated *by construction* in
+this matrix, not new empirical evidence (that already exists separately,
+from real Mininet traffic, in `results/independence_check/` and
+`results/loss_saturation_check/`). The genuinely new information here is
+delta/epsilon's relationships, which are not mechanically fixed by the
+generation formula — churn/reliability come from how the real DecisionEngine
+reacts to the injected conditions.
+
+**Results** (`results/joint_independence_matrix/`):
+
+|  | utilization | delay_ms | loss | churn_score | reliability_down |
+|---|---|---|---|---|---|
+| utilization | 1.000 | 0.995* | 0.875* | 0.480* | -0.193 |
+| delay_ms | 0.995* | 1.000 | 0.882* | 0.486* | -0.161 |
+| loss | 0.875* | 0.882* | 1.000 | 0.247* | -0.094 |
+| churn_score | 0.480* | 0.486* | 0.247* | 1.000 | 0.037 |
+| reliability_down | -0.193 | -0.161 | -0.094 | 0.037 | 1.000 |
+
+(* = p<0.05, 4999-permutation test)
+
+VIF: utilization=330.3, delay_ms=105.0, loss=219.1, **churn_score=2.0**,
+**reliability_down=1.2**.
+
+**Reading:** utilization/delay/loss's enormous VIF (100-330, far past the
+conventional 5-10 concern threshold) is exactly what the caveat above
+predicts — they are near-degenerate as a set in this synthetic generation,
+not a new finding about the real network. **churn_score and
+reliability_down's VIF (2.0, 1.2) are both low** — the actually new,
+substantive result: neither is well-predicted by a linear combination of the
+other four, i.e. both carry real information not redundant with
+utilization/delay/loss or each other. u-churn (ρ=0.480, p<0.05) and
+churn-reliability (ρ=0.037, not significant) both match the standalone
+`decision_churn_independence.py` run exactly (same seed/event schedule,
+delay/loss just added on top) — internally consistent, not a new
+contradiction. New cross-pairs from this run: delay-churn (ρ=0.486,
+significant, tracks u-churn closely since delay≈f(u) here) and loss-churn
+(ρ=0.247, significant but weaker); delay-reliability and loss-reliability
+both not significant.
 
 ---
 
