@@ -270,9 +270,19 @@ class ProposedDriver:
         persistence_required_samples: Optional[int] = None,
         initial_path: Optional[List[str]] = None,
         utilization_threshold: Optional[float] = None,
+        offered_load_utilization: Optional[float] = None,
     ):
         self.state = state
         self.src, self.dst = src, dst
+        # This flow's own bandwidth demand, as a utilization fraction --
+        # fixed 2026-08-12 ("self-influence / offered-load accounting"):
+        # applied to candidate paths only when comparing reroute options,
+        # since the current path already reflects this flow's real
+        # contribution but a candidate doesn't yet. See PathCost.
+        # calculate_path_cost's docstring. None (default) preserves prior
+        # behavior exactly -- existing callers are unaffected unless they
+        # opt in.
+        self.offered_load_utilization = offered_load_utilization
         self.engine = DecisionEngine(state, config_path=config_path)
         if persistence_required_samples is not None:
             self.engine.persistence_checker.required_samples = persistence_required_samples
@@ -309,7 +319,10 @@ class ProposedDriver:
         flow_updates = 0
 
         if self.watching_recovery:
-            action = self.engine.evaluate_recovery_switchback(self.src, self.dst, self.path, now=now_s)
+            action = self.engine.evaluate_recovery_switchback(
+                self.src, self.dst, self.path, now=now_s,
+                offered_load_utilization=self.offered_load_utilization,
+            )
             if action:
                 self.path = action["new_path"]
                 flow_updates += len(self.engine.flow_installer.build_flow_rules(self.path))
@@ -322,7 +335,8 @@ class ProposedDriver:
                 candidate = self.engine.path_cost.find_best_path(self.src, self.dst, now=now_s)
                 if candidate and candidate != self.path:
                     action = self.engine.evaluate_pair(
-                        self.src, self.dst, self.path, candidate, violation, now=now_s
+                        self.src, self.dst, self.path, candidate, violation, now=now_s,
+                        offered_load_utilization=self.offered_load_utilization,
                     )
                     if action:
                         flow_updates += len(self.engine.flow_installer.build_flow_rules(candidate))
@@ -347,7 +361,8 @@ class ProposedDriver:
             return {"reroute": False, "flow_updates": 0}
         candidate = self.engine.path_cost.find_best_path(self.src, self.dst, now=now_s)
         action = self.engine.evaluate_failure(
-            self.src, self.dst, self.path, failed_link_id, candidate, now=now_s
+            self.src, self.dst, self.path, failed_link_id, candidate, now=now_s,
+            offered_load_utilization=self.offered_load_utilization,
         )
         if action:
             flow_updates = len(self.engine.flow_installer.build_flow_rules(candidate))
@@ -372,6 +387,7 @@ def make_drivers(
     dst: str = PRIMARY_PAIR[1],
     threshold: float = 0.7,
     persistence_required_samples: Optional[int] = None,
+    offered_load_utilization: Optional[float] = None,
 ) -> Dict[str, object]:
     """
     Construct one driver per algorithm sharing the same seeded NetworkState,
@@ -381,6 +397,12 @@ def make_drivers(
     initialised onto this same converged path too -- it then never adapts,
     which is the property Stage 6 actually exercises (its own hop-count
     tie-break behavior is already validated independently in Stage 3).
+
+    offered_load_utilization: opt-in fix for the "self-influence /
+    offered-load accounting" limitation (documented 2026-08-11, fixed
+    2026-08-12) -- forwarded to ProposedDriver only (static/dynamic don't go
+    through PathCost.compare_paths' asymmetric old/new costing). None
+    (default) preserves every existing caller's behavior exactly.
     """
     initial_path = GraphBuilder(state).get_candidate_paths(src, dst, max_paths=1)
     initial_path = initial_path[0] if initial_path else StaticShortestPath(state.get_active_graph()).compute_path(src, dst)
@@ -394,5 +416,6 @@ def make_drivers(
             persistence_required_samples=persistence_required_samples,
             initial_path=initial_path,
             utilization_threshold=threshold,
+            offered_load_utilization=offered_load_utilization,
         ),
     }

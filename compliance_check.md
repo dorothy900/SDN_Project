@@ -82,20 +82,39 @@ path_cost_weights:
 **Formula**: Cost = α·Utilization + β·Delay + γ·Loss + δ·Link-instability + ε·Reliability  
 **Implementation Location**: [`src/decision/path_cost.py`](file:///home/vboxuser/sdn-project/src/decision/path_cost.py) — implemented and unit-tested (`tests/path_cost.py`, `results/decision_engine/path_cost_unit_tests.txt`)
 
-**Known limitation (identified 2026-08-11, not fixed): no self-influence / offered-load accounting.**
-Every edge's utilization term is the link's *currently observed* utilization
-(`GraphBuilder._calculate_edge_cost`, fed by `NetworkState.get_link_stats()`) — i.e. what the link
-looks like before this flow is placed on it. The cost model never adds the flow's own offered load
-to a candidate path's projected utilization, so a candidate that looks cheap under background
-traffic can still become congested once a large ("elephant") flow actually lands on it — the
-decision can look correct at evaluation time and still under-perform once executed. This is a
-genuine gap, not a simplification the code works around elsewhere: `grep` confirms no
-`offered_load`/`residual`/`projected` accounting anywhere in `path_cost.py` or `graph_builder.py`.
-Real traffic-engineering systems (e.g. MPLS-TE) typically address this with residual-bandwidth /
-admission-control reservation, which this project does not implement — in scope, this project's
-research question is *when to reroute and how to avoid instability*, not *capacity-aware placement
-of a specific flow's demand*. Worth stating explicitly as a limitation/future-work item rather than
-leaving it implicit.
+**Fixed 2026-08-12 (identified 2026-08-11): self-influence / offered-load accounting.**
+Every edge's utilization term used to be the link's *currently observed* utilization
+(`GraphBuilder._calculate_edge_cost`, fed by `NetworkState.get_link_stats()`) for *both* the current
+path and any candidate — but the current path already really carries this flow (its observed
+utilization already includes it), while a candidate doesn't yet. Comparing "current path with the
+flow" against "candidate path without it" systematically made candidates look cheaper than they'd
+actually be once the flow moved there.
+
+Fixed by adding `offered_load_utilization` (a utilization fraction representing this flow's own
+bandwidth demand) to `PathCost.calculate_path_cost()`/`is_improvement()`/`compare_paths()`, applied
+asymmetrically: added to a candidate path's per-edge utilization before pricing it (`dataclasses.
+replace()` on a copy of each edge's real `LinkStatistics`, clamped at 1.0, then priced through
+`GraphBuilder._calculate_edge_cost()` directly — the precomputed whole-graph weights can't be reused
+since only this path's specific edges need the bump), left untouched for the current path (which
+already reflects reality). Threaded through the real decision chain end to end, all backward-compatible
+(`offered_load_utilization: Optional[float] = None`, so every existing caller's behavior is unchanged
+unless it opts in): `DecisionEngine.evaluate_pair/evaluate_service_congestion/evaluate_failure/
+evaluate_recovery_switchback/_evaluate_congestion/_execute_reroute` → `PathCost` → `ProposedDriver`
+(`experiments/simulation_common.py`, new constructor parameter) → `make_drivers()`.
+
+4 new tests in `tests/path_cost.py` demonstrate the actual bug and the fix: a candidate that looks
+like a strong improvement (accepted under the minimum-improvement gate) when its own future load is
+ignored can flip to rejected once that load is correctly priced in — the concrete failure mode this
+was about. Full suite 96/96 passing.
+
+**Still not wired into real deployment or offline scenario experiments** — the capability now exists
+and is unit-tested, but no caller currently passes a real per-flow `offered_load_utilization` value
+(existing scenario experiments in `experiments/*.py` all still call with the default `None`, so their
+recorded results are unaffected by this fix). Real traffic-engineering systems (e.g. MPLS-TE)
+typically get this value from admission-control reservation, which this project still does not
+implement — wiring a real flow's demand in (e.g. from `FlowDefinition.offered_load_mbps` in
+`experiments/traffic_generator.py`, converted to a utilization fraction via link capacity) is a
+natural follow-up, not done as part of this fix.
 
 **Known limitation (found 2026-08-12, both now fixed): delay_ms and packet_loss had no
 real data source anywhere in the monitor pipeline.** `grep -rn "delay_ms=" src/` returned zero

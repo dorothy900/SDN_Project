@@ -114,15 +114,23 @@ class DecisionEngine:
         candidate_path: List[str],
         violation,
         now: Optional[float] = None,
+        offered_load_utilization: Optional[float] = None,
     ) -> Optional[dict]:
         """
         Evaluate an ordinary (non-emergency) congestion reroute.
 
         Applies, in order: hysteresis (enter/release state), hold-down,
         persistence, minimum-improvement path cost, and the change budget.
+
+        offered_load_utilization: this flow's own bandwidth demand,
+        expressed as a utilization fraction -- forwarded to PathCost so
+        candidate_path is costed as if this flow were already routed across
+        it (current_path already reflects that for real, since the flow is
+        actually there). See PathCost.calculate_path_cost's docstring.
         """
         return self._evaluate_congestion(
-            src, dst, current_path, candidate_path, violation, skip_persistence=False, now=now
+            src, dst, current_path, candidate_path, violation, skip_persistence=False, now=now,
+            offered_load_utilization=offered_load_utilization,
         )
 
     def evaluate_service_congestion(
@@ -135,6 +143,7 @@ class DecisionEngine:
         utilization: float,
         service_type: str,
         now: Optional[float] = None,
+        offered_load_utilization: Optional[float] = None,
     ) -> Optional[dict]:
         """
         Evaluate a congestion reroute using the traffic-class-specific policy
@@ -162,7 +171,8 @@ class DecisionEngine:
         )
         skip_persistence = self.traffic_policy.should_reroute_immediately(service_type)
         return self._evaluate_congestion(
-            src, dst, current_path, candidate_path, violation, skip_persistence=skip_persistence, now=now
+            src, dst, current_path, candidate_path, violation, skip_persistence=skip_persistence, now=now,
+            offered_load_utilization=offered_load_utilization,
         )
 
     def _evaluate_congestion(
@@ -174,6 +184,7 @@ class DecisionEngine:
         violation,
         skip_persistence: bool,
         now: Optional[float] = None,
+        offered_load_utilization: Optional[float] = None,
     ) -> Optional[dict]:
         """Shared hysteresis/hold-down/persistence/budget gating for a congestion reroute."""
         pair = (src, dst)
@@ -228,6 +239,7 @@ class DecisionEngine:
             stability_used=stability_used,
             emergency=False,
             now=now,
+            offered_load_utilization=offered_load_utilization,
         )
         if action is not None:
             self.change_budget.record_path_change()
@@ -243,6 +255,7 @@ class DecisionEngine:
         link_id: str,
         candidate_path: Optional[List[str]],
         now: Optional[float] = None,
+        offered_load_utilization: Optional[float] = None,
     ) -> Optional[dict]:
         """
         Evaluate an emergency reroute after a link on the active path fails.
@@ -273,6 +286,7 @@ class DecisionEngine:
             stability_used=["failure_handler", "emergency_bypass"],
             emergency=True,
             now=now,
+            offered_load_utilization=offered_load_utilization,
         )
 
     def begin_recovery_watch(
@@ -303,8 +317,14 @@ class DecisionEngine:
         dst: str,
         current_path: List[str],
         now: Optional[float] = None,
+        offered_load_utilization: Optional[float] = None,
     ) -> Optional[dict]:
-        """Switch back to the original path once the recovery window confirms stability."""
+        """
+        Switch back to the original path once the recovery window confirms
+        stability. original_path doesn't currently carry the flow (it's on
+        current_path), so offered_load_utilization applies here too -- same
+        asymmetry as any other reroute comparison.
+        """
         pair = (src, dst)
         link_id = self.recovery_links.get(pair)
         if not link_id or not self.recovery_manager.is_eligible_for_switchback(link_id, now=now):
@@ -325,6 +345,7 @@ class DecisionEngine:
             stability_used=["recovery_manager"],
             emergency=True,
             now=now,
+            offered_load_utilization=offered_load_utilization,
         )
 
     def _execute_reroute(
@@ -337,6 +358,7 @@ class DecisionEngine:
         stability_used: List[str],
         emergency: bool,
         now: Optional[float] = None,
+        offered_load_utilization: Optional[float] = None,
     ) -> Optional[dict]:
         """Shared cost-check, logging, and installation logic for any reroute."""
         comparison = self.path_cost.compare_paths(
@@ -345,6 +367,7 @@ class DecisionEngine:
             min_abs_reduction=0.0 if emergency else self.min_improvement.get("absolute_cost_reduction", 0.1),
             min_rel_reduction=0.0 if emergency else self.min_improvement.get("relative_cost_reduction", 0.15),
             now=now,
+            offered_load_utilization=offered_load_utilization,
         )
         if not comparison["accepted"]:
             self.logger.log_no_improvement(
