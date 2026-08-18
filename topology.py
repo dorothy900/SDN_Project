@@ -3,11 +3,18 @@
 Topology - Geant2012 Mininet Topology Definition
 """
 
+import sys
 from pathlib import Path
 from typing import Dict
 
 import networkx as nx
 from mininet.topo import Topo
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.monitor.link_capacity import resolve_link_bw_mbps
 
 
 class GeantTopology(Topo):
@@ -43,7 +50,9 @@ class GeantTopology(Topo):
         for u, v in graph.edges():
             su, _ = self.node_mapping[str(u)]
             sv, _ = self.node_mapping[str(v)]
-            self.addLink(su, sv, bw=self.link_bw_mbps, delay=self.link_delay)
+            edge_data = graph.get_edge_data(u, v) or {}
+            link_bw = resolve_link_bw_mbps(edge_data.get("LinkLabel"), self.link_bw_mbps)
+            self.addLink(su, sv, bw=link_bw, delay=self.link_delay)
 
     def get_switch_names(self):
         return [s for s, _ in self.node_mapping.values()]

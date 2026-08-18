@@ -539,6 +539,50 @@ Regression-tested: full suite passing (78/78) after both fixes, including the
 pre-existing `tests/graph_builder.py` residual-direction tests (unaffected,
 since they use utilization in the well-supported [0, 0.6] range).
 
+### Real per-link bandwidth from data/Geant2012.graphml (2026-08-12)
+
+`topology.py` previously applied one flat `bw=100` (Mbit) to every one of the 61
+real GEANT links, ignoring that 39 of those edges carry a real `LinkLabel`
+attribute in the source GraphML (e.g. "10 Gbps", "155 Mbps") — sourced from
+GEANT's own published map (`Provenance=Primary`, `Source=geant.net`, see the
+graph-level metadata dump earlier in this project's history). The other 22
+edges have no `LinkLabel` in the source data (missing from GEANT's own map,
+not something this project removed).
+
+Real values (155Mbps-10Gbps) aren't directly usable for traffic generation on
+this test VM: a single iperf UDP stream already tops out around ~50-55Mbit/s
+here (see the independence-check ceiling, above), so a link literally
+configured at 10Gbps would never be reachable by any traffic this environment
+can generate. Added `src/monitor/link_capacity.py::resolve_link_bw_mbps()` --
+a pure function (no mininet import, so it's actually unit-testable in this
+project's venv, unlike `topology.py` itself) mapping each real tier to a
+scaled-down Mininet value that preserves the real *relative* ordering (10Gbps
+links get more simulated bandwidth than 155Mbps links) while staying within a
+range real generated traffic can saturate: 155Mbps->20, 1Gbps->50,
+2.5Gbps->80, 10Gbps->150, "Lit Fibre" (dark fibre, no explicit capacity in the
+source data) treated as the top tier (150). Links with no real label keep the
+existing flat default (100) unchanged -- deliberately not guessed.
+`topology.py`'s `build()` now looks up each edge's real `LinkLabel` and
+resolves it per-link instead of using one constant for all 61 links. 5 new
+unit tests in `tests/link_capacity.py`; full suite 83/83 passing; the real
+`build()` verified live (`/usr/bin/python3`, which has the mininet package)
+against the actual GraphML file: 40 switches, real per-edge bandwidth
+distribution 150Mbit x27 / 100Mbit(default) x21 / 50Mbit x6 / 80Mbit x5 /
+20Mbit x2 = 61.
+
+**Known consequence, not yet addressed:** `scripts/mininet_correlation_check.py`
+and `scripts/mininet_independence_check.py` both hardcode
+`LINK_CAPACITY_MBPS = 100.0` for their utilization calculation
+(`achieved_u = tx_mbps / LINK_CAPACITY_MBPS`). One of the three links tested
+in the independence check, s5-s6, is a real "10 Gbps" edge and is now
+configured at 150Mbit (not 100) by this change. The 60 samples already
+collected and used for the `scale_ms` refit above predate this topology
+change (all three links were still uniformly 100Mbit when that data was
+gathered), so that refit is unaffected. But **any future re-run of either
+script needs to read each tested link's actual configured bandwidth instead
+of assuming 100** — currently a stale, silently-wrong assumption for s5-s6
+specifically if these scripts are ever run again as-is.
+
 ---
 
 ## Final Verdict
