@@ -738,6 +738,22 @@ the residual fix addressed. Not yet acted on; noted for whenever
 `congestion_loss_bump`'s `onset`/`scale` are fit to real data (still open,
 task 5).
 
+**Follow-up check (same day): does the full cost formula compensate for
+alpha's blind spot?** Computed on the same 30 loss samples, using the real
+`config/decision.yaml` weights (alpha=0.4, beta=0.3, gamma=0.2): correlating
+`requested_rate/capacity` (true offered-load severity) against alpha's term
+alone (`alpha * achieved_utilization`) gives rho=0.416, p=0.022 — weak,
+consistent with the blind spot above. Correlating the same offered-load
+severity against the **full** `alpha + beta + gamma` cost (using real
+delay/loss residuals) gives **rho=0.862, p=0.0001** — more than double the
+alpha-alone correlation. The residual-based beta/gamma terms do substantially
+recover the true congestion signal alpha's utilization measurement misses
+under heavy loss: real delay/loss run far above what the (deflated)
+utilization would predict in exactly these cases, producing large residuals
+that beta/gamma correctly price. Confirms the concern raised above is
+real but the formula's *existing* residual design already mitigates most of
+it — not a case that additionally needs fixing on its own.
+
 ---
 
 ## Final Verdict
