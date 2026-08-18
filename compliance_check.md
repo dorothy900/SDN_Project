@@ -772,6 +772,28 @@ the residual fix addressed. Not yet acted on; noted for whenever
 `congestion_loss_bump`'s `onset`/`scale` are fit to real data (still open,
 task 5).
 
+**dCor check (2026-08-18): is the weak achieved_utilization-vs-loss
+correlation actually a non-monotonic relationship Spearman underestimates?**
+`scripts/mininet_loss_saturation_check.py` already computes distance
+correlation on this data (dCor=0.5302) but never ran a significance test
+against it or wrote the result up. Ran a 9999-permutation test on both
+statistics against the same 30 real samples:
+
+```
+Spearman rho(achieved_utilization, loss) = 0.3248, p=0.0832  (not significant)
+dCor(achieved_utilization, loss)         = 0.5302, p=0.0036  (significant)
+```
+
+dCor detects a real, statistically significant dependency that Spearman
+misses — consistent with the feedback-suppression mechanism documented
+above (heavy loss depresses the achieved_utilization signal itself), which
+would produce a non-monotonic (e.g. rise-then-plateau-or-fall) shape rather
+than a clean monotonic increase. Practical reading: alpha's blind spot under
+heavy loss is *not* just "weak correlation, nothing there" — there is a real
+dependency, it's just the wrong shape for a monotonic-only test to fully
+credit. This reinforces (doesn't change) the existing finding just below
+that beta/gamma's residual design substantially compensates for it.
+
 **Follow-up check (same day): does the full cost formula compensate for
 alpha's blind spot?** Computed on the same 30 loss samples, using the real
 `config/decision.yaml` weights (alpha=0.4, beta=0.3, gamma=0.2): correlating
