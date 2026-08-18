@@ -47,15 +47,17 @@ from src.monitor.statistics_collector import StatisticsCollector
 
 OF_VERSION = "OpenFlow13"
 HOST_LINK_DELAY_MS = 1.0
-LINK_CAPACITY_MBPS = 100.0
 
 # One representative real GEANT link, same pair used throughout this
 # project's other Mininet checks (s1<->s2, GEANT nodes "0"<->"1"-ish
 # adjacency already exercised by mininet_delay_measurement.py's edge list).
 NODE_U, NODE_V = "s1", "s2"
 
-# Target utilization levels to sweep (fraction of LINK_CAPACITY_MBPS).
-# Achieved utilization is measured independently, not assumed to hit these
+# Target utilization levels to sweep (fraction of this link's real configured
+# bandwidth -- topology.py resolves per-link bandwidth from real GEANT data
+# as of 2026-08-12, so this is no longer a flat assumed 100Mbit for every
+# link; see topo.get_link_bw_mbps() in main()). Achieved utilization is
+# measured independently, not assumed to hit these
 # exactly -- see module docstring.
 TARGET_UTILIZATION_LEVELS = [0.1, 0.3, 0.5, 0.7, 0.9]
 TRIALS_PER_LEVEL = 2
@@ -144,12 +146,15 @@ def main() -> None:
         collector = StatisticsCollector(
             output_dir=output_dir, config_path=str(PROJECT_ROOT / "config" / "topology.yaml")
         )
+        link_capacity_mbps = topo.get_link_bw_mbps(NODE_U, NODE_V)
+        collector.set_link_capacity(su.name, int(sending_port), link_capacity_mbps)
 
-        print(f"*** Sweeping real link {NODE_U}<->{NODE_V} through {len(TARGET_UTILIZATION_LEVELS)} "
+        print(f"*** Sweeping real link {NODE_U}<->{NODE_V} (real configured capacity "
+              f"{link_capacity_mbps}Mbit) through {len(TARGET_UTILIZATION_LEVELS)} "
               f"utilization levels x {TRIALS_PER_LEVEL} trials, measuring real utilization/delay/loss...")
 
         for level in TARGET_UTILIZATION_LEVELS:
-            target_mbps = level * LINK_CAPACITY_MBPS
+            target_mbps = level * link_capacity_mbps
             for trial in range(1, TRIALS_PER_LEVEL + 1):
                 hv.cmd("kill %iperf 2>/dev/null")
                 hv.cmd(f"iperf -s -u -i 1 > /tmp/iperf_server_{NODE_U}_{NODE_V}.log 2>&1 &")

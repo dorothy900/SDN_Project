@@ -26,6 +26,7 @@ class GeantTopology(Topo):
         self.link_bw_mbps = link_bw_mbps
         self.link_delay = link_delay
         self.node_mapping: Dict[str, tuple] = {}  # graph_id -> (switch, host)
+        self.link_bandwidths: Dict[tuple, int] = {}  # frozenset({switch_a, switch_b}) -> real configured Mbit
         super().__init__()
 
     def build(self):
@@ -53,12 +54,22 @@ class GeantTopology(Topo):
             edge_data = graph.get_edge_data(u, v) or {}
             link_bw = resolve_link_bw_mbps(edge_data.get("LinkLabel"), self.link_bw_mbps)
             self.addLink(su, sv, bw=link_bw, delay=self.link_delay)
+            self.link_bandwidths[frozenset((su, sv))] = link_bw
 
     def get_switch_names(self):
         return [s for s, _ in self.node_mapping.values()]
 
     def get_host_names(self):
         return [h for _, h in self.node_mapping.values()]
+
+    def get_link_bw_mbps(self, switch_a: str, switch_b: str) -> int:
+        """
+        Real configured Mbit/s for a switch-switch link, as actually applied
+        by build() (see src/monitor/link_capacity.py) -- callers measuring
+        utilization against this link must divide by this, not assume a flat
+        constant, since real per-link bandwidth now varies (2026-08-12).
+        """
+        return self.link_bandwidths[frozenset((switch_a, switch_b))]
 
 
 # Registers this topology with Mininet's --custom loader, e.g.:

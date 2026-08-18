@@ -15,7 +15,13 @@ first pass (scripts/mininet_correlation_check.py, results/correlation_check/):
      link's 100Mbit cap (110/130Mbit) -- the real tc/htb shaper on the
      interface is a hard limit, so overshooting it deterministically forces
      near-saturation utilization (and real, observable loss) regardless of
-     how precisely iperf hits its nominal send rate.
+     how precisely iperf hits its nominal send rate. (This assumed every
+     tested link was capped at 100Mbit, true when this was first run; since
+     topology.py started applying real per-link GEANT bandwidth (2026-08-12),
+     s5-s6 is actually 150Mbit -- REQUESTED_RATES_MBPS's overshoot values no
+     longer guarantee saturating *that* link specifically. Left as-is since
+     the 60 samples already collected predate that change; a future rerun
+     should widen REQUESTED_RATES_MBPS or check per link.)
 
 Also computes real dependence statistics on the collected samples via
 experiments/independence_stats.py (Spearman + permutation test, distance
@@ -60,10 +66,14 @@ from experiments.independence_stats import (
 
 OF_VERSION = "OpenFlow13"
 HOST_LINK_DELAY_MS = 1.0
-LINK_CAPACITY_MBPS = 100.0
 
 # Three real, distinct GEANT links (not adjacent to each other in the
 # topology) -- s1-s2 kept for comparability with the first-pass experiment.
+# Each link's real configured bandwidth varies (topology.py resolves it from
+# real GEANT data as of 2026-08-12: s5-s6 is a real 10Gbps edge, configured
+# here at 150Mbit; the other two have no real label and keep the 100Mbit
+# default) -- looked up per-link via topo.get_link_bw_mbps() in main(), not
+# assumed to be a flat constant.
 LINKS = [("s1", "s2"), ("s5", "s6"), ("s13", "s35")]
 
 # Requested send rate in Mbit, not "target utilization fraction" -- see
@@ -157,6 +167,7 @@ def main() -> None:
                 hu.cmd(f"arp -s {hv.IP()} {hv.MAC()}")
                 hv.cmd(f"arp -s {hu.IP()} {hu.MAC()}")
                 sending_port = install_single_link_rules(su, sv, hu, hv)
+                collector.set_link_capacity(su.name, int(sending_port), topo.get_link_bw_mbps(node_u, node_v))
                 current_link = (node_u, node_v)
                 current_nodes = (su, sv, hu, hv)
             su, sv, hu, hv = current_nodes
