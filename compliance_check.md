@@ -670,6 +670,76 @@ an artifact of that choice.
 
 ---
 
+## Loss finally measured for real, and why OVS's own counter missed it (2026-08-12)
+
+Both prior loss attempts (`results/correlation_check/`, `results/independence_check/`,
+70 combined samples) read exactly 0.0 loss throughout. Root cause established
+via a live diagnostic (`tc -s qdisc show` vs. `ovs-ofctl dump-ports` on the
+same interface, same moment, during a 60Mbit burst on a real 20Mbit-capped
+link): **`ovs-ofctl dump-ports`'s `drop=` field — what `StatisticsCollector.
+calculate_loss_rate()` has always read — does not see tc-netem/htb shaping
+drops at all.** Confirmed live: `tc` reported 29104 real dropped packets;
+OVS reported `drop=0` for that same interface at that same moment. These are
+two separate accounting layers (the OVS datapath vs. the kernel queueing
+discipline sitting below it), not two views of the same counter — `drop=` is
+structurally blind to shaping-induced loss, which is exactly this project's
+own dominant loss mechanism under congestion (every link is tc-rate-limited).
+This means **`StatisticsCollector.calculate_loss_rate()`, as used by the real
+production system, likely reads near-zero loss on any real link congested
+purely by hitting its configured bandwidth cap** — a real, previously
+unknown limitation of the "packet_loss real data source" fix documented
+earlier in this file.
+
+**Fixed** by adding `src/monitor/qdisc_stats.py` (`QdiscLossTracker`,
+`parse_tc_qdisc_stats()`): reads tc's own root-qdisc "Sent X bytes Y pkt
+(dropped Z, ...)" line directly, delta-based across samples (same pattern as
+`StatisticsCollector`'s existing OVS byte-rate calculation). 6 unit tests in
+`tests/qdisc_stats.py`, built against the real captured `tc` output from the
+diagnostic run above. `StatisticsCollector.calculate_loss_rate()` itself was
+left unchanged — it remains correct for what it measures (OVS-datapath-level
+drops), just not sufficient alone; `scripts/mininet_loss_saturation_check.py`
+now uses `QdiscLossTracker` instead.
+
+**Real results** (`results/loss_saturation_check/`, real 20Mbit GEANT link
+s5-s14, officially "155 Mbps" per `data/Geant2012.graphml`, 30 samples,
+randomized requested rates spanning below/above the real cap): 20/30 samples
+measured real nonzero loss, up to 61% at the highest requested rates —
+genuine saturation-driven loss, finally observed.
+
+**A second, independent measurement-definition issue surfaced in this same
+run, distinct from the OVS-counter blind spot above:**
+- `requested_rate/link_capacity` (an offered-load proxy, exogenous to the
+  loss measurement) vs. loss: rho=0.977, **p=0.0001** — extremely strong.
+- `achieved_utilization` (the same real-OVS-counter-based quantity
+  `StatisticsCollector.calculate_utilization()` computes, and what alpha
+  actually prices in production) vs. loss: rho=0.325, p=0.083 — notably
+  weaker, not significant at the conventional threshold.
+
+**Why they differ:** `achieved_utilization` is computed from *successfully
+transmitted* bytes. Heavy loss reduces that very quantity — visible directly
+in the raw samples (e.g. a 35Mbit request lost 52% of its traffic and showed
+achieved_utilization=0.601, while a 16Mbit request lost ~0% and showed
+achieved_utilization=0.808, higher despite requesting less). Loss suppresses
+the signal meant to predict it, a real feedback effect, not a measurement
+error. This matters beyond this one experiment: **the real production cost
+formula's alpha term has no access to "offered load," only to this same
+achieved/successful-throughput utilization** — real monitoring can only ever
+observe what actually got through, never what was attempted. So the weaker,
+borderline-significant correlation (0.325) is the one actually representative
+of alpha-vs-loss in production, not the strong one (0.977) — a genuinely
+different situation from the earlier utilization-vs-delay finding, where the
+raw and production-relevant quantities agreed. Practical implication worth
+flagging for future weight/curve calibration: near saturation, alpha may
+*understate* true congestion severity precisely because loss is suppressing
+the utilization signal that alpha reads — meaning gamma's real information
+content near saturation is plausibly *less* redundant with alpha than
+beta/delay's was, the opposite direction from the double-counting problem
+the residual fix addressed. Not yet acted on; noted for whenever
+`congestion_loss_bump`'s `onset`/`scale` are fit to real data (still open,
+task 5).
+
+---
+
 ## Final Verdict
 
 **✅ Weeks 1–6 are implemented and passing (48/48 tests), Stage 6's comparative
