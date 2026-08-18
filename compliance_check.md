@@ -429,6 +429,74 @@ scripts' own docstrings for that distinction).
 
 ---
 
+## Independence check on the cost formula's variables (2026-08-12)
+
+The residual fix (above, and the "double-counting" note earlier in this document)
+assumes utilization is correlated with delay/loss in a real network. This was
+tested twice against real Mininet traffic, not asserted.
+
+**First pass** (`scripts/mininet_correlation_check.py`, `results/correlation_check/`):
+single link (s1-s2), 10 samples, monotonic utilization sweep. Found ρ(u,delay)=0.90,
+but on review the design was flawed — effective sample size closer to 3 than 10
+(low-utilization trials nearly duplicated each other; the 0.7/0.9 target levels'
+achieved-utilization ranges overlapped), test order was swept monotonically by
+utilization (confounding utilization with time/warm-up drift, never randomized),
+no significance test computed, and achieved utilization never exceeded ~60%.
+
+**Redesigned second pass** (`scripts/mininet_independence_check.py`,
+`experiments/independence_stats.py`, `results/independence_check/`): 60 samples
+across 3 real links (s1-s2, s5-s6, s13-s35), fully randomized (link, rate, trial)
+execution order via a seeded shuffle, and a from-scratch numpy toolkit (no
+scipy/statsmodels available in this environment) — Spearman + permutation test
+(9999 permutations, not an asymptotic p-value table), distance correlation (dCor,
+zero iff independent — catches non-monotonic dependence Spearman would miss), and
+VIF (joint, not pairwise, collinearity across utilization/delay/loss together).
+Tested both raw delay/loss and their residuals against `congestion_model.py`'s
+prediction (residual result doubles as a diagnostic for whether that curve is
+calibrated). All three statistical functions are unit-tested against synthetic
+cases with a known analytic answer in `tests/independence_stats.py` (10/10 passing).
+
+**Results:**
+- utilization vs delay (raw): ρ=0.469, **p=0.0003** — real, statistically
+  significant monotonic dependence. Lower than the first pass's 0.90 but far more
+  trustworthy given the fixed design; the first pass's number was inflated by its
+  flaws, not a more accurate estimate.
+- utilization vs delay_residual: ρ=0.433, p=0.0010 — barely lower than the raw
+  correlation. **This means `congestion_model.py`'s current curve (hand-picked
+  `scale_ms=8.0`, never fit to real data) is doing very little of the decorrelation
+  job the residual fix relies on** — most of the raw utilization-delay relationship
+  is still present in what beta is supposed to price as "anomalous" delay. This
+  elevates pending task 3 (fit the curve to real data) from a nice-to-have to a
+  real gap in the residual fix's current effectiveness.
+- dCor confirms the Spearman finding (0.646 raw, 0.628 residual) and VIF shows no
+  problematic joint collinearity among the three (1.0–1.4, well under the
+  conventional 5 concern threshold) — the delay finding is not an artifact of a
+  hidden multivariate relationship Spearman alone would miss.
+- **utilization vs loss: ρ=0.000 in both passes, loss was exactly 0.0 across all
+  60 samples in the second pass, including requests deliberately made to exceed
+  the link's 100Mbit cap (110/130Mbit).** Achieved utilization on those samples
+  still topped out around 0.50-0.55 — the same ceiling as the first pass, on a
+  different link, under randomized order. This is now a reproducible pattern
+  across two independent experiments, not an artifact of one flawed run: the
+  bottleneck is very likely the test VM's own iperf UDP generation throughput
+  (probably CPU-bound), not the link's tc/htb shaping, which was assumed
+  (incorrectly) to guarantee saturation once requested rate exceeds link capacity.
+  **The utilization-loss relationship remains empirically unverified after two
+  attempts** — not evidence it doesn't exist, evidence this environment hasn't
+  yet generated enough real load to observe it.
+- delta (churn) and epsilon (reliability) are still untested — both experiments
+  inject traffic via static OpenFlow rules with no DecisionEngine running, so churn
+  stays at 0 throughout; testing those needs a differently-shaped experiment driven
+  by real DecisionEngine reroute events, not raw traffic load.
+
+**Follow-up needed:** a loss-focused experiment that sidesteps the generation
+ceiling (e.g., testing against a link configured with a much lower `bw=` so that
+the test VM's achievable throughput, whatever it tops out at, actually exceeds
+that link's capacity) rather than assuming request-rate overshoot alone forces
+saturation.
+
+---
+
 ## Final Verdict
 
 **✅ Weeks 1–6 are implemented and passing (48/48 tests), Stage 6's comparative
