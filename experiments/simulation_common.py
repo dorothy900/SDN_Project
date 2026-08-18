@@ -34,8 +34,37 @@ from src.routing.graph_builder import GraphBuilder
 from src.routing.static_shortest_path import StaticShortestPath
 
 SAMPLE_INTERVAL_S = 2.0  # matches config/topology.yaml monitoring.interval_seconds
-LINK_CAPACITY_MBPS = 100.0  # matches config/topology.yaml mininet.link_bandwidth_mbps
+LINK_CAPACITY_MBPS = 100.0  # flat fallback -- see resolve_offered_load_utilization()
+                             # for the real per-link alternative added 2026-08-12;
+                             # this constant is still used as-is by compute_flow_metrics()
+                             # below, a separate, not-yet-revisited spot with the same
+                             # stale-100-for-every-link assumption src/monitor/
+                             # link_capacity.py fixed for topology.py.
 BASE_TIMESTAMP = datetime(2026, 8, 24, 12, 0, 0)
+
+_GEANT_GRAPHML_PATH = Path(__file__).resolve().parents[1] / "data" / "Geant2012.graphml"
+
+
+def resolve_offered_load_utilization(link_id_str: str, offered_load_mbps: float) -> float:
+    """
+    Convert a flow's real Mbit demand into a utilization fraction for a
+    specific link, using the same real per-link GEANT bandwidth data
+    topology.py resolves for the live Mininet deployment
+    (src/monitor/link_capacity.py) -- so the offline simulator's notion of
+    "how much utilization would this flow add" is grounded in the same real
+    capacity numbers the actual testbed uses, not an arbitrary assumed one.
+    Added 2026-08-12 alongside PathCost's offered_load_utilization support.
+    """
+    import networkx as nx
+
+    from src.monitor.link_capacity import resolve_link_bw_mbps
+
+    graph = nx.Graph(nx.read_graphml(_GEANT_GRAPHML_PATH))
+    graph.remove_edges_from(nx.selfloop_edges(graph))
+    u, v = link_id_str.split("-", 1)
+    edge_data = graph.get_edge_data(u, v) or {}
+    capacity_mbps = resolve_link_bw_mbps(edge_data.get("LinkLabel"), default_mbps=LINK_CAPACITY_MBPS)
+    return min(offered_load_mbps / capacity_mbps, 1.0)
 
 # flow-video-1 (h3->h8) maps directly onto GEANT nodes ("2","7"): FlowInstaller's
 # hN <-> node(N-1) convention. This pair has 3 distinct, non-trivial candidate

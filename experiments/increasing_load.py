@@ -21,6 +21,7 @@ from .simulation_common import (
     compute_flow_metrics,
     link_id,
     make_drivers,
+    resolve_offered_load_utilization,
     set_link_condition,
 )
 from .traffic_generator import FlowDefinition
@@ -43,8 +44,21 @@ class IncreasingLoadScenario:
     ) -> Path:
         state = build_network_state(self.output_dir, seed=run_index)
         src, dst = PRIMARY_PAIR
+        # flow-video-1 (24.0 Mbps) is the real flow mapped onto PRIMARY_PAIR
+        # (see simulation_common.py's PRIMARY_PAIR comment) -- its own real
+        # bandwidth demand is what "proposed" must now account for on any
+        # candidate path it doesn't already carry it on (offered-load fix,
+        # 2026-08-12). Static/dynamic don't go through PathCost's asymmetric
+        # costing, so this only actually changes "proposed"'s behavior.
+        primary_flow = next((f for f in flows if f.flow_id == "flow-video-1"), None)
         drivers = make_drivers(state, src, dst, threshold=0.7, persistence_required_samples=3)
         hotspot_link = link_id(drivers["static"].path[0], drivers["static"].path[1])
+        offered_load_utilization = (
+            resolve_offered_load_utilization(hotspot_link, primary_flow.offered_load_mbps)
+            if primary_flow is not None
+            else None
+        )
+        drivers["proposed"].offered_load_utilization = offered_load_utilization
 
         rows: List[Dict[str, object]] = []
         for sample in range(1, SAMPLES + 1):
