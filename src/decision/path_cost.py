@@ -26,12 +26,21 @@ class PathCost:
         }
         self.graph_builder = GraphBuilder(network_state, weights)
 
-    def calculate_path_cost(self, path: List[str]) -> float:
-        """Calculate total cost of a path."""
+    def calculate_path_cost(self, path: List[str], now: Optional[float] = None) -> float:
+        """
+        Calculate total cost of a path.
+
+        now is forwarded to GraphBuilder's delta/churn lookup -- pass the
+        same synthetic clock a caller is driving DecisionEngine with (e.g.
+        an offline experiment's now_s), otherwise churn is evaluated against
+        real wall-clock time even when the rest of the decision is happening
+        on a synthetic one, and a synthetic-clock-recorded churn event will
+        never be seen (see NetworkState.get_link_churn_score's docstring).
+        """
         if not path or len(path) < 2:
             return float('inf')
 
-        graph = self.graph_builder.build_weighted_graph()
+        graph = self.graph_builder.build_weighted_graph(now=now)
         total_cost = 0.0
 
         for i in range(len(path) - 1):
@@ -74,10 +83,10 @@ class PathCost:
 
         return metrics
 
-    def find_best_path(self, src: str, dst: str) -> Optional[List[str]]:
+    def find_best_path(self, src: str, dst: str, now: Optional[float] = None) -> Optional[List[str]]:
         """Find lowest cost path between two nodes."""
         try:
-            graph = self.graph_builder.build_weighted_graph()
+            graph = self.graph_builder.build_weighted_graph(now=now)
             if not (graph.has_node(src) and graph.has_node(dst)):
                 return None
             return nx.shortest_path(graph, source=src, target=dst, weight='weight')
@@ -86,10 +95,11 @@ class PathCost:
 
     def is_improvement(self, old_path: List[str], new_path: List[str],
                       min_abs_reduction: float = 0.1,
-                      min_rel_reduction: float = 0.15) -> bool:
+                      min_rel_reduction: float = 0.15,
+                      now: Optional[float] = None) -> bool:
         """Check if new path is a significant improvement."""
-        old_cost = self.calculate_path_cost(old_path)
-        new_cost = self.calculate_path_cost(new_path)
+        old_cost = self.calculate_path_cost(old_path, now=now)
+        new_cost = self.calculate_path_cost(new_path, now=now)
 
         if new_cost >= old_cost:
             return False
@@ -106,10 +116,11 @@ class PathCost:
         new_path: List[str],
         min_abs_reduction: float = 0.1,
         min_rel_reduction: float = 0.15,
+        now: Optional[float] = None,
     ) -> Dict[str, float]:
         """Return comparable cost and gain metrics for two candidate paths."""
-        old_cost = self.calculate_path_cost(old_path)
-        new_cost = self.calculate_path_cost(new_path)
+        old_cost = self.calculate_path_cost(old_path, now=now)
+        new_cost = self.calculate_path_cost(new_path, now=now)
         abs_improvement = old_cost - new_cost
         rel_improvement = abs_improvement / old_cost if old_cost > 0 else 0.0
         accepted = self.is_improvement(
@@ -117,6 +128,7 @@ class PathCost:
             new_path,
             min_abs_reduction=min_abs_reduction,
             min_rel_reduction=min_rel_reduction,
+            now=now,
         )
         return {
             "old_cost": round(old_cost, 6),

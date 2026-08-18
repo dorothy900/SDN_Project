@@ -585,6 +585,91 @@ specifically if these scripts are ever run again as-is.
 
 ---
 
+## delta/epsilon independence, and a real bug this exposed (2026-08-12)
+
+Extended the independence check to the two variables never tested before:
+delta (link instability/churn) and epsilon (reliability). Unlike
+utilization/delay/loss, these are properties of the *decision system's own
+bookkeeping* (`NetworkState.record_link_churn()`, called from
+`DecisionEngine._execute_reroute()` whenever a reroute happens), not physical
+network measurements — so this was built as an **offline** experiment
+(`experiments/decision_churn_independence.py`), driving the real
+`ProposedDriver`/`DecisionEngine` through a randomized sequence of
+congestion/failure/recovery/quiet events across 6 real GEANT pairs, not a
+Mininet script. This matches the project's established split: decision-logic
+correctness is tested offline, real physical relationships need Mininet.
+
+**A real, previously-undiscovered bug surfaced on the first run: churn score
+read back as exactly 0.0 for every sample, despite reroutes visibly
+happening.** Root cause: `NetworkState.record_link_churn()` accepts an
+explicit `timestamp=`, but `NetworkState.get_link_churn_score()` had **no
+`now` parameter at all** and always read back against real wall-clock time.
+Any caller recording churn against a synthetic clock — which is exactly what
+every offline scenario experiment in this project does (`now_s` starting
+from 0, not real `time.time()`) — would record correctly but always read
+back 0.0, since the window-eviction check compared the small synthetic
+timestamp against real time and evicted it as (falsely) 60+ seconds stale on
+every single read. `tests/graph_builder.py`'s existing churn test didn't
+catch this because it happens to use `now = time.time()` (real time) when
+recording, so it never exercised the mismatch.
+
+**Consequence: delta has likely been silently inert in every offline scenario
+experiment's actual decision-making** (`increasing_load.py`, `congestion.py`,
+`failure_recovery.py`, `stale_stats.py`, `priority_policy.py`, and this new
+one) since the churn-tracker feature was added — not just in isolated
+unit-test checks, but in the real `PathCost`/`GraphBuilder` calls those
+drivers make on every `.step()`/`.on_link_failure()`. This is a deeper version
+of the same category of bug as the TCLink issue: a signal that looked wired
+up correctly in isolation, silently doing nothing in the actual integration
+path.
+
+**Fixed by threading `now` through the full real call chain**, all
+backward-compatible (`now: Optional[float] = None`, defaults preserve real
+deployment's existing behavior where record and read both naturally use real
+time): `NetworkState.get_link_churn_score(link_id, now=None)` →
+`GraphBuilder.build_weighted_graph/_calculate_edge_cost/get_candidate_paths/
+enumerate_candidate_paths/get_path_cost(now=None)` →
+`PathCost.calculate_path_cost/find_best_path/is_improvement/compare_paths
+(now=None)` → `DecisionEngine._execute_reroute`'s `compare_paths` call now
+passes its own `now` → `ProposedDriver.step()`/`on_link_failure()`
+(`experiments/simulation_common.py`) now pass their own `now_s` into
+`find_best_path`. 3 new regression tests in `tests/network_state.py` proving
+the facade now respects an explicit synthetic clock (and documenting the
+real-time-default case that masked this bug). Full suite 86/86 passing.
+
+**Real results, after the fix** (`results/decision_churn_independence/`, 90
+samples, offline, no Mininet):
+- utilization vs churn_score: rho=0.480, **p=0.0001** — real, significant.
+  Makes sense mechanically: sustained high utilization triggers more
+  reroutes, and every reroute records churn on the links it touches.
+- utilization vs reliability_down: rho=-0.193, p=0.0645 — not significant at
+  the conventional 0.05 threshold (borderline).
+- **churn_score vs reliability_down: rho=0.037, p=0.747 — not significant.**
+  This directly tests the hypothesis raised earlier in this document (a
+  failing link should show elevated churn *and* elevated "recently down"
+  simultaneously, since `_execute_reroute()` records churn on the very link
+  an emergency reroute just moved away from) — **the hypothesis is not
+  supported by this data.** Plausible reason: `on_link_failure()` only
+  triggers a real reroute (and therefore churn) if the failed link is
+  actually on the driver's *current* path; a prior congestion event may
+  already have moved the driver off that link before the "fail" event in the
+  schedule reaches it, so failure and churn don't co-occur as reliably as
+  the code-reading hypothesis suggested.
+- VIF (1.0–1.1) shows no problematic joint collinearity.
+
+**Caveats, stated plainly:** samples within one pair's campaign track the
+same link across time (churn is inherently about recent history), so they
+are not fully independent draws — event order is randomized *across*
+campaigns but not fully decoupled from within-campaign temporal structure.
+Persistence was relaxed to `persistence_required_samples=1` (real default is
+3) to get enough reroute events within a compact experiment — this affects
+the *rate* of churn generation and should be kept in mind before treating the
+correlation strength as a production-representative number, though the
+qualitative finding (delta/epsilon not clearly correlated) is not obviously
+an artifact of that choice.
+
+---
+
 ## Final Verdict
 
 **✅ Weeks 1–6 are implemented and passing (48/48 tests), Stage 6's comparative

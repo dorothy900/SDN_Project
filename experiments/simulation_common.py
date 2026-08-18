@@ -319,7 +319,7 @@ class ProposedDriver:
         if hotspot_link is not None and hotspot_utilization is not None:
             violation = self.engine.threshold_detector.check_utilization(hotspot_link, hotspot_utilization)
             if violation is not None:
-                candidate = self.engine.path_cost.find_best_path(self.src, self.dst)
+                candidate = self.engine.path_cost.find_best_path(self.src, self.dst, now=now_s)
                 if candidate and candidate != self.path:
                     action = self.engine.evaluate_pair(
                         self.src, self.dst, self.path, candidate, violation, now=now_s
@@ -345,7 +345,7 @@ class ProposedDriver:
         current_links = {link_id(u, v) for u, v in zip(self.path, self.path[1:])}
         if failed_link_id not in current_links:
             return {"reroute": False, "flow_updates": 0}
-        candidate = self.engine.path_cost.find_best_path(self.src, self.dst)
+        candidate = self.engine.path_cost.find_best_path(self.src, self.dst, now=now_s)
         action = self.engine.evaluate_failure(
             self.src, self.dst, self.path, failed_link_id, candidate, now=now_s
         )

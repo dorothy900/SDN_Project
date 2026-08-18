@@ -41,9 +41,27 @@ class NetworkState:
         """Record that a link was just added to or removed from an installed path."""
         self.link_churn.record_change(link_id, now=timestamp)
 
-    def get_link_churn_score(self, link_id: str) -> float:
-        """Normalized [0.0, 1.0] instability score -- see LinkChurnTracker."""
-        return self.link_churn.get_churn_score(link_id)
+    def get_link_churn_score(self, link_id: str, now: Optional[float] = None) -> float:
+        """
+        Normalized [0.0, 1.0] instability score -- see LinkChurnTracker.
+
+        now defaults to real wall-clock time (LinkChurnTracker.get_churn_score's
+        own default) -- fine for real deployment, where record_link_churn's
+        timestamp= is also normally left to default to real time. But before
+        2026-08-12 this method had no `now` parameter at all, while
+        record_link_churn already accepted an explicit timestamp -- any
+        caller recording churn against a synthetic clock (e.g. an offline
+        experiment using now_s starting from 0, not real time.time()) would
+        record correctly but then always read back 0.0, since the window-
+        eviction check inside LinkChurnTracker.get_churn_score compared that
+        small synthetic timestamp against real wall-clock time and evicted it
+        as (falsely) 60+ seconds stale on every read. Found by
+        experiments/decision_churn_independence.py, which needs exactly this
+        to test delta/epsilon offline the same way the rest of this project's
+        scenario experiments (experiments/*.py) already drive DecisionEngine
+        with a synthetic now_s clock instead of real sleeps.
+        """
+        return self.link_churn.get_churn_score(link_id, now=now)
     
     def update_link_statistics(self, link_stats: LinkStatistics) -> None:
         """

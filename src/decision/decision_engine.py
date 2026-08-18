@@ -344,6 +344,7 @@ class DecisionEngine:
             candidate_path,
             min_abs_reduction=0.0 if emergency else self.min_improvement.get("absolute_cost_reduction", 0.1),
             min_rel_reduction=0.0 if emergency else self.min_improvement.get("relative_cost_reduction", 0.15),
+            now=now,
         )
         if not comparison["accepted"]:
             self.logger.log_no_improvement(
