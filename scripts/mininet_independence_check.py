@@ -34,6 +34,24 @@ Does NOT cover instability (delta/churn) or reliability (epsilon) -- those
 are driven by real DecisionEngine reroute events, not raw traffic load, and
 need a differently-shaped experiment (see pending task 1's note on this).
 
+Coverage-range extension (2026-08-19): the first three links all sit at
+100/150Mbit, comfortably above this VM's own iperf UDP generation ceiling
+(~50-55Mbit/s, established over multiple runs) -- so achieved_utilization
+across every pass so far has topped out around 0.55, regardless of how much
+the requested rate overshoots the link's real cap. That leaves the u>0.55
+region (where congestion_delay_bump_ms's curve does most of its work, and
+where MAX_UTILIZATION_FOR_EXTRAPOLATION=0.6 starts clamping) with zero real
+coverage. Added a 4th real link, s5-s14 (GEANT's "155 Mbps" tier, scaled to
+20Mbit by topology.py -- same one mininet_loss_saturation_check.py used to
+reach u=0.89), with its own lower rate schedule so the *same* VM generation
+ceiling now represents a much larger fraction of that link's actual
+capacity. Also switched loss measurement to QdiscLossTracker (reads tc's own
+drop counters) instead of StatisticsCollector.calculate_loss_rate() (OVS
+port counters) for all links -- OVS's drop= counter is structurally blind to
+tc/htb shaping drops (confirmed in the loss-saturation investigation), which
+matters specifically for s5-s14 since that link is expected to actually
+saturate.
+
 Run as: sudo python3 scripts/mininet_independence_check.py
 """
 from __future__ import annotations
@@ -44,6 +62,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, List, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -56,6 +75,7 @@ from mininet.log import setLogLevel
 from topology import GeantTopology
 from src.monitor.delay_prober import parse_ping_avg_rtt_ms, estimate_one_way_link_delay_ms
 from src.monitor.statistics_collector import StatisticsCollector
+from src.monitor.qdisc_stats import QdiscLossTracker
 from src.routing.congestion_model import predicted_delay_ms, predicted_loss
 from experiments.independence_stats import (
     distance_correlation,
@@ -67,18 +87,27 @@ from experiments.independence_stats import (
 OF_VERSION = "OpenFlow13"
 HOST_LINK_DELAY_MS = 1.0
 
-# Three real, distinct GEANT links (not adjacent to each other in the
-# topology) -- s1-s2 kept for comparability with the first-pass experiment.
-# Each link's real configured bandwidth varies (topology.py resolves it from
-# real GEANT data as of 2026-08-12: s5-s6 is a real 10Gbps edge, configured
-# here at 150Mbit; the other two have no real label and keep the 100Mbit
-# default) -- looked up per-link via topo.get_link_bw_mbps() in main(), not
+# Four real, distinct GEANT links. The first three sit at 100/150Mbit
+# (topology.py resolves real GEANT bandwidth as of 2026-08-12: s5-s6 is a
+# real 10Gbps edge configured at 150Mbit; the other two have no real label
+# and keep the 100Mbit default). s5-s14 is a real "155 Mbps" GEANT edge
+# scaled to 20Mbit -- added 2026-08-19 specifically to extend achieved-
+# utilization coverage past this VM's generation ceiling (see module
+# docstring). Looked up per-link via topo.get_link_bw_mbps() in main(), not
 # assumed to be a flat constant.
-LINKS = [("s1", "s2"), ("s5", "s6"), ("s13", "s35")]
+LINKS = [("s1", "s2"), ("s5", "s6"), ("s13", "s35"), ("s5", "s14")]
 
 # Requested send rate in Mbit, not "target utilization fraction" -- see
 # module docstring for why the top two intentionally exceed link capacity.
-REQUESTED_RATES_MBPS = [10, 20, 30, 40, 50, 60, 70, 85, 100, 130]
+# Per-link, because s5-s14's 20Mbit cap needs its own lower schedule --
+# reusing the other three's schedule against it would be pure overshoot at
+# every level and skip the mid-utilization range entirely.
+LINK_RATES_MBPS: Dict[Tuple[str, str], List[int]] = {
+    ("s1", "s2"): [10, 20, 30, 40, 50, 60, 70, 85, 100, 130],
+    ("s5", "s6"): [10, 20, 30, 40, 50, 60, 70, 85, 100, 130],
+    ("s13", "s35"): [10, 20, 30, 40, 50, 60, 70, 85, 100, 130],
+    ("s5", "s14"): [4, 8, 12, 16, 20, 24, 28, 35, 45, 60],
+}
 # 2 -> 5 trials/level (2026-08-18): the first pass (60 samples, n=20/link) left
 # a real, dCor-significant but unexplained residual signal after the
 # delay-curve refit (dCor=0.36, p=0.009) that survived ruling out both an
@@ -142,7 +171,7 @@ def main() -> None:
     plan = [
         {"link": link, "rate_mbps": rate, "trial": trial}
         for link in LINKS
-        for rate in REQUESTED_RATES_MBPS
+        for rate in LINK_RATES_MBPS[link]
         for trial in range(1, TRIALS_PER_LEVEL + 1)
     ]
     rng = random.Random(RANDOM_SEED)
@@ -152,16 +181,18 @@ def main() -> None:
     try:
         net.start()
         print("*** Network up:", len(net.switches), "switches,", len(net.hosts), "hosts")
-        print(f"*** Randomized sample plan: {len(plan)} samples across {len(LINKS)} links "
-              f"x {len(REQUESTED_RATES_MBPS)} rates x {TRIALS_PER_LEVEL} trials")
+        print(f"*** Randomized sample plan: {len(plan)} samples across {len(LINKS)} links, "
+              f"{TRIALS_PER_LEVEL} trials/rate")
 
         collector = StatisticsCollector(
             output_dir=output_dir, config_path=str(PROJECT_ROOT / "config" / "topology.yaml")
         )
+        qdisc_tracker = QdiscLossTracker()
 
         current_link = None
         current_nodes = None
         sending_port = None
+        current_intf_name = None
 
         for index, sample in enumerate(plan, start=1):
             node_u, node_v = sample["link"]
@@ -175,6 +206,10 @@ def main() -> None:
                 hv.cmd(f"arp -s {hu.IP()} {hu.MAC()}")
                 sending_port = install_single_link_rules(su, sv, hu, hv)
                 collector.set_link_capacity(su.name, int(sending_port), topo.get_link_bw_mbps(node_u, node_v))
+                current_intf_name = su.connectionsTo(sv)[0][0].name
+                # Seed the qdisc tracker with a first snapshot so this link's
+                # first real sample already has a delta to compute against.
+                qdisc_tracker.calculate_loss_rate(current_intf_name, su.cmd(f"tc -s qdisc show dev {current_intf_name}"))
                 current_link = (node_u, node_v)
                 current_nodes = (su, sv, hu, hv)
             su, sv, hu, hv = current_nodes
@@ -197,15 +232,16 @@ def main() -> None:
             t1_raw = collector.parse_ovs_port_stats(su.name)
             t1_stats = collector.calculate_rates(t1_raw, sample_time=time.time())
             port_entry = next((p for p in t1_stats if str(p.port) == str(sending_port)), None)
+            tc_output = su.cmd(f"tc -s qdisc show dev {current_intf_name}")
+            loss = qdisc_tracker.calculate_loss_rate(current_intf_name, tc_output)
             hv.cmd("kill %iperf 2>/dev/null")
 
-            if port_entry is None or delay_ms is None:
+            if port_entry is None or delay_ms is None or loss is None:
                 print(f"   [{index}/{len(plan)}] {node_u}-{node_v} rate={sample['rate_mbps']}M "
-                      f"trial={sample['trial']}: SKIPPED (no port stats or ping failure)")
+                      f"trial={sample['trial']}: SKIPPED (no port stats, ping failure, or no qdisc delta)")
                 continue
 
             achieved_u = collector.calculate_utilization(port_entry)
-            loss = collector.calculate_loss_rate(port_entry)
             results.append({
                 "link": f"{node_u}-{node_v}", "requested_rate_mbps": sample["rate_mbps"],
                 "trial": sample["trial"], "achieved_utilization": achieved_u,
@@ -229,7 +265,7 @@ def main() -> None:
         print(f"\n*** RESULT: {n} usable samples across {len(LINKS)} links")
 
         report_lines = [
-            "# Independence Check v2 (randomized order, 3 links, saturation-forcing rates)",
+            "# Independence Check v2 (randomized order, 4 links incl. one below-generation-ceiling)",
             "",
             f"Generated: {datetime.now().isoformat()}",
             f"Samples: {n} (target {len(plan)}), links: {', '.join(f'{u}-{v}' for u, v in LINKS)}",

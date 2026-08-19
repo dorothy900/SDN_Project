@@ -13,51 +13,57 @@ mostly a function of utilization in a real network).
 """
 from __future__ import annotations
 
-BASELINE_DELAY_MS = 6.0
+BASELINE_DELAY_MS = 34.062
 BASELINE_LOSS = 0.001
 
 
-def congestion_delay_bump_ms(utilization: float, scale_ms: float = 113.603) -> float:
+def congestion_delay_bump_ms(utilization: float, scale_ms: float = 120.174) -> float:
     """
     M/M/1-inspired queueing delay: grows as utilization/(1-utilization), which
     diverges near saturation -- a real, well-known queueing-theory shape.
 
-    scale_ms fit 2026-08-12 by ordinary least squares (delay - BASELINE_DELAY_MS
-    = scale_ms * u/(1-u)) against 60 real samples from scripts/
-    mininet_independence_check.py (results/independence_check/independence_samples.csv,
-    3 real links, randomized order). The previous value (8.0) was hand-picked,
-    never fit to data, and left a real, statistically significant correlation
-    between utilization and the delay *residual* (Spearman rho=0.433,
-    p=0.0010 -- meaning beta was still partly pricing utilization a second
-    time, undermining the point of the residual fix). Refitting this one
-    constant dropped the residual-vs-utilization Pearson correlation from
-    0.495 to -0.084 on the same data. Still a *chosen functional form*
-    (a different queueing discipline would give a different shape), and
-    calibrated to this project's own Mininet testbed (uniformly configured
-    at 100Mbit per link in topology.py) rather than GEANT's real, per-link
-    capacities (see compliance_check.md -- e.g. real link s5-s6 is
-    officially 10Gbps per data/Geant2012.graphml's LinkLabel, tested here at
-    100Mbit) -- appropriate for predicting this testbed's own behavior, not
-    a claim about real GEANT queueing at real capacities.
+    Refit 2026-08-19 on 195 real samples (one 1368ms/u=0.024 sample excluded
+    as an unambiguous outlier -- removing it alone shifted scale_ms by ~16%,
+    see compliance_check.md) spanning 4 real links, u in [0.006, 0.782] --
+    the first real coverage above ~0.55, added specifically because the
+    previous fit (scale_ms=113.603, BASELINE_DELAY_MS=6.0, fit 2026-08-12 on
+    60 samples capped at u~0.55) had zero real evidence past that point.
+    Used Theil-Sen (median of pairwise slopes) instead of OLS: the "low-u"
+    samples turned out not to be a clean baseline (12-443ms spread even below
+    u=0.25, likely Mininet/VM scheduling jitter under concurrent iperf+ping),
+    and OLS/mean-based fitting is not robust to that kind of noise the way
+    Theil-Sen's median is.
 
-    The 60 real samples never exceeded ~0.55 achieved utilization (a separate,
-    still-open limitation -- see compliance_check.md on the iperf generation
-    ceiling), so this fit has no real evidence above that point. u/(1-u)
-    diverges hyperbolically as u->1, and with this much larger scale_ms than
-    the previous hand-picked value, extrapolating the fit up to the old
-    clamp (0.99) produced absurd values (11252ms at u=0.99) that, in one real
-    scenario, made a background link's delay_residual negative enough to push
-    a whole edge's cost below zero -- networkx's Dijkstra correctly refuses
-    negative weights. Clamped at MAX_UTILIZATION_FOR_EXTRAPOLATION (0.6, just
-    above the real data's range) instead of 0.99: past that point this
-    function holds its value at the u=0.6 plateau rather than continuing to
-    extrapolate into untested territory. GraphBuilder._calculate_edge_cost
-    also floors the final cost at a small positive epsilon independently of
-    this -- an edge cost should never be able to go negative regardless of
-    how well any curve is calibrated, that's a correctness property, not a
-    calibration one.
+    BASELINE_DELAY_MS moved from a hand-picked 6.0 to the fitted 34.062 --
+    higher than the topology's configured 10ms propagation delay alone would
+    suggest, consistent with real per-sample overhead (host stack, ARP,
+    virtual-switch forwarding, Mininet scheduling) that a pure wire-delay
+    number never captured.
+
+    Important caveat carried forward, not resolved: of the 23 real samples
+    with u>0.6, 22 come from a single link (s5-s14, the low-capacity link
+    added specifically to reach this range -- see
+    scripts/mininet_independence_check.py). The fit's high-utilization shape
+    therefore rests on one real link's behavior, not a cross-link average --
+    cannot yet distinguish "delay genuinely steepens faster than u/(1-u)
+    predicts at high u" from "this specific link's queueing/buffer sizing is
+    idiosyncratic". Even after this refit (using the more robust Theil-Sen
+    estimator), real delay for u>0.6 still runs systematically above the
+    curve's prediction (median residual +108.8ms, vs -6.6ms for u<=0.6;
+    dCor(u, residual)=0.347, p=0.0001, still significant) -- refitting
+    reduced but did not eliminate this. Documented as a known, quantified
+    limitation rather than further tuned; the confound above means further
+    curve tweaking without more real, cross-link high-u data would likely
+    just be overfitting to one link's idiosyncrasies.
+
+    MAX_UTILIZATION_FOR_EXTRAPOLATION widened from 0.6 (the previous data's
+    ceiling) to 0.75 (just under this fit's real ceiling of 0.782) for the
+    same reason as before: extrapolating past any real evidence is what
+    caused the earlier negative-edge-weight bug (see compliance_check.md).
+    GraphBuilder._calculate_edge_cost's unconditional MIN_EDGE_COST floor
+    remains the correctness backstop regardless of this curve's calibration.
     """
-    MAX_UTILIZATION_FOR_EXTRAPOLATION = 0.6
+    MAX_UTILIZATION_FOR_EXTRAPOLATION = 0.75
     u = min(max(utilization, 0.0), MAX_UTILIZATION_FOR_EXTRAPOLATION)
     return scale_ms * (u / (1.0 - u))
 

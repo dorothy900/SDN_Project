@@ -969,6 +969,92 @@ just worth flagging so this number is never read at face value.
 
 ---
 
+## Extended real coverage past u=0.55; delay curve refit, loss curve fit attempted and rejected (2026-08-19)
+
+The independence-check family of scripts never observed achieved_utilization
+above ~0.55 on any of the three original real links (all 100/150Mbit,
+comfortably above this VM's own iperf UDP generation ceiling). Added a 4th
+real link to `scripts/mininet_independence_check.py`: s5-s14 (GEANT's real
+"155 Mbps" tier, scaled to 20Mbit by `topology.py` -- the same one
+`mininet_loss_saturation_check.py` used to reach u=0.89), with its own lower
+rate schedule (4-60Mbit vs the other three's 10-130Mbit) so the same VM
+generation ceiling represents a much larger fraction of *this* link's real
+capacity. Also switched loss measurement to `QdiscLossTracker` (tc counters)
+for all 4 links, since OVS's port counter is structurally blind to
+tc/htb shaping drops (established earlier) -- this matters specifically for
+s5-s14 since it actually saturates. Result: 196 usable real samples, u range
+**[0.006, 0.782]**, first real coverage above 0.55.
+
+**Finding 1 -- utilization-loss finally significant in this unified
+experiment.** `rho(u, loss)=0.5918, p=0.0001`, `dCor=0.5965, p=0.0001` (all
+31 nonzero-loss samples from s5-s14, the only link that saturates). Not new
+in isolation (`loss_saturation_check` already established this), but the
+first time it shows up in the *same* run as delay, confirming both are
+measurable together without switching methodology mid-experiment.
+
+**Finding 2 -- the u=0.6 extrapolation clamp is confirmed (not just
+suspected) to underpredict real delay past that point.**
+`utilization vs delay_residual: rho=0.1353, p=0.0568` (borderline),
+`dCor=0.3782, p=0.0001` (up from 0.283 at n=150/u<=0.55) -- stronger than
+before once real high-u data existed to reveal it. Direct check: mean
+residual for u<=0.6 was +59.6ms vs **+189.3ms for u>0.6** -- because
+`predicted_delay_ms` clamped its input at u=0.6, its output is *flat* past
+that point (176.4ms) regardless of how much higher real u climbs, while real
+measured delay kept rising (up to 696ms at u=0.651). This is exactly the
+extrapolation risk `congestion_delay_bump_ms`'s docstring already flagged as
+theoretical ("no real evidence above [the old ceiling]") -- now measured.
+
+One sample was excluded before any of the above: `s13-s35 u=0.024,
+delay=1368ms` -- delay two orders of magnitude above every neighboring
+low-u sample at near-zero utilization, almost certainly Mininet/VM
+scheduling jitter, not a congestion effect. Confirmed influential:
+refitting with vs without it moved scale_ms by ~16% (96.6 vs 112.3) and cut
+SSE by over a third. Excluded, documented, not silently dropped.
+
+**Refit `congestion_delay_bump_ms` on the clean 195-sample set using
+Theil-Sen (median of pairwise slopes) instead of OLS**, since the "low-u"
+samples turned out not to be a clean baseline either (12-443ms spread even
+below u=0.25) -- mean/OLS is not robust to that; Theil-Sen's median is.
+Result: `scale_ms=120.174` (was 113.603), `BASELINE_DELAY_MS=34.062ms` (was
+6.0, hand-picked). Spearman(u, new residual) cleaned up to 0.049 (p=0.489,
+not significant, was borderline before refit) but **dCor stayed
+significant (0.347, p=0.0001)** -- the underprediction past u=0.6 shrank but
+did not disappear (median residual now +108.8ms for u>0.6 vs -6.6ms below).
+**Important confound, not resolved:** 22 of the 23 real u>0.6 samples come
+from the single s5-s14 link -- cannot yet distinguish "delay genuinely
+steepens faster than u/(1-u) predicts at high u in general" from "this one
+link's queueing/buffer sizing is idiosyncratic." Applied the refit anyway
+(better than the alternative of keeping a fit with zero evidence past 0.55)
+and widened `MAX_UTILIZATION_FOR_EXTRAPOLATION` from 0.6 to 0.75 (just under
+the real ceiling of 0.782, same "clamp at the evidence boundary" principle
+as before) -- but documented this residual gap rather than claiming it's
+fixed. 96/96 tests and `experiments/decision_engine_check.py` both still
+pass with the new curve (checked specifically for the earlier
+negative-edge-weight failure mode; none observed at the new clamp boundary).
+
+**Attempted to fit `congestion_loss_bump`'s onset/scale to real data
+(31 real nonzero-loss samples from this run + 30 from
+`loss_saturation_check`, all the same real s5-s14 link) -- rejected the
+result, did not apply it.** Grid-searched onset over [0, 0.9] with a
+closed-form scale fit at each step (both SSE/L2 and a median-based/L1
+variant, to check the result wasn't an artifact of one loss function):
+both converged to a near-zero onset (0.00-0.09), which does not match the
+real data's own zero-loss samples well into the 0.3-0.5 utilization range on
+the *same* link -- the fit is dominated by the handful of large loss values
+(up to 0.65) at high u and sacrifices the low/mid-u region to accommodate
+them, and even the residual after this "best" fit remains dCor-significant
+(0.42, p<0.001) either way. **Conclusion: the quadratic-past-a-threshold
+functional form and/or the 77 real samples (all one link) available today
+are not enough to responsibly fit both onset and scale at once** --
+production `congestion_loss_bump` is left unchanged
+(`onset=0.7, scale=0.05`, still hand-picked, still not properly calibrated)
+rather than replacing a known-uncalibrated curve with an equally
+uncalibrated one under a false claim of having fit it. Revisit once more
+real, cross-link saturating data exists, or with a more careful fitting
+method than a plain grid search.
+
+---
+
 ## Final Verdict
 
 **✅ Weeks 1–6 are implemented and passing (48/48 tests), Stage 6's comparative
