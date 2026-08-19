@@ -12,7 +12,9 @@ from .link_monitor import LinkMonitor
 from .topology_state import TopologyState
 from .history_store import HistoryStore
 from .link_churn_tracker import LinkChurnTracker
+from .delay_jitter_tracker import DelayJitterTracker
 from .models import LinkStatistics
+from ..routing.congestion_model import predicted_delay_ms
 
 
 class NetworkState:
@@ -34,6 +36,7 @@ class NetworkState:
         self.link_monitor = LinkMonitor(output_dir=output_dir)
         self.history = HistoryStore(window_size=history_window_size, output_dir=output_dir)
         self.link_churn = LinkChurnTracker()
+        self.delay_jitter = DelayJitterTracker()
 
         self.last_update_time: Optional[datetime] = None
 
@@ -62,16 +65,51 @@ class NetworkState:
         with a synthetic now_s clock instead of real sleeps.
         """
         return self.link_churn.get_churn_score(link_id, now=now)
-    
-    def update_link_statistics(self, link_stats: LinkStatistics) -> None:
+
+    def record_delay_residual(self, link_id: str, residual_ms: float, now: Optional[float] = None) -> None:
+        """Record a fresh delay-residual observation for jitter tracking."""
+        self.delay_jitter.record_delay_residual(link_id, residual_ms, now=now)
+
+    def get_delay_jitter_score(self, link_id: str, now: Optional[float] = None) -> float:
+        """
+        Normalized [0.0, 1.0] instability score -- see DelayJitterTracker.
+
+        now behaves the same way get_link_churn_score's does: pass the same
+        clock (synthetic or real) used elsewhere in a given caller's flow so
+        the rolling window is evaluated consistently, not silently against
+        real wall-clock time when the rest of a scenario runs on a synthetic
+        now_s.
+        """
+        return self.delay_jitter.get_jitter_score(link_id, now=now)
+
+    def update_link_statistics(self, link_stats: LinkStatistics, now: Optional[float] = None) -> None:
         """
         Update the state with new link statistics.
-        
+
         Args:
             link_stats: New statistics for a single link
+            now: clock value to feed the jitter tracker with (see
+                get_delay_jitter_score's docstring on why this needs to
+                match whatever clock a caller later reads jitter against).
+                Defaults to link_stats.timestamp converted to an epoch
+                float -- correct for real deployment, where both recording
+                and reading naturally use real wall-clock time. An offline
+                experiment driving everything off a synthetic now_s clock
+                (as this project's scenario experiments do -- see
+                experiments/simulation_common.py's set_link_condition)
+                must pass that same now_s here, or every sample gets
+                recorded against real time while later reads use a tiny
+                synthetic value -- the eviction cutoff then never exceeds
+                any real timestamp, so the "rolling window" never actually
+                rolls; it silently accumulates every sample for the whole
+                experiment instead of reflecting only the last
+                window_seconds. (Same root cause as the churn `now`-facade
+                bug fixed 2026-08-12, mirror-imaged: that one made an
+                offline signal always read 0 by over-evicting; this one
+                would make it never evict.)
         """
         self.link_monitor.update_link_stats(link_stats)
-        
+
         # Add to history
         self.history.add_link_sample(
             link_id=link_stats.link_id,
@@ -81,7 +119,16 @@ class NetworkState:
             tx_mbps=link_stats.tx_mbps,
             status=link_stats.status,
         )
-        
+
+        # Feed the jitter tracker with this sample's delay residual, so
+        # get_delay_jitter_score() reflects real, current per-link
+        # dispersion (see DelayJitterTracker's docstring for why this
+        # exists).
+        if link_stats.delay_ms is not None:
+            residual_ms = float(link_stats.delay_ms) - predicted_delay_ms(float(link_stats.utilization))
+            jitter_now = now if now is not None else link_stats.timestamp.timestamp()
+            self.record_delay_residual(link_stats.link_id, residual_ms, now=jitter_now)
+
         self.last_update_time = link_stats.timestamp
     
     def set_link_status(self, link_id: str, is_up: bool) -> None:

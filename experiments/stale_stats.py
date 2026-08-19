@@ -90,10 +90,10 @@ class StaleStatsScenario:
 
         for sample in range(1, total_samples + 1):
             now_s = sample * SAMPLE_INTERVAL_S
-            set_link_condition(truth_state, hotspot_link, utilization=BASELINE_UTILIZATION)
+            set_link_condition(truth_state, hotspot_link, utilization=BASELINE_UTILIZATION, now=now_s)
             stale = sample == glitch_sample
             observed_utilization = GLITCH_UTILIZATION if stale else BASELINE_UTILIZATION
-            set_link_condition(observed_state, hotspot_link, utilization=observed_utilization)
+            set_link_condition(observed_state, hotspot_link, utilization=observed_utilization, now=now_s)
 
             self._emit_sample_rows(
                 rows=rows,
@@ -139,11 +139,11 @@ class StaleStatsScenario:
         for sample in range(1, total_samples + 1):
             now_s = sample * SAMPLE_INTERVAL_S
             ground_truth_utilization = CONGESTED_UTILIZATION if sample in congestion_samples else BASELINE_UTILIZATION
-            set_link_condition(truth_state, hotspot_link, utilization=ground_truth_utilization)
+            set_link_condition(truth_state, hotspot_link, utilization=ground_truth_utilization, now=now_s)
 
             stale = sample in delayed_samples
             observed_utilization = last_ground_truth if stale else ground_truth_utilization
-            set_link_condition(observed_state, hotspot_link, utilization=observed_utilization)
+            set_link_condition(observed_state, hotspot_link, utilization=observed_utilization, now=now_s)
             last_ground_truth = ground_truth_utilization
 
             self._emit_sample_rows(

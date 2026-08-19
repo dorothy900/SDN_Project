@@ -33,6 +33,7 @@ class GraphBuilder:
             "gamma": 0.2,
             "delta": 0.05,
             "epsilon": 0.05,
+            "zeta": 0.05,
         }
 
     def build_weighted_graph(self, now: Optional[float] = None) -> nx.Graph:
@@ -200,6 +201,21 @@ class GraphBuilder:
         congestion_model's curve is, since no amount of curve-fitting can
         guarantee every real (delay, loss) sample stays within the model's
         assumptions.
+
+        zeta*jitter (added 2026-08-19): a Breusch-Pagan test formally
+        confirmed delay_residual is heteroscedastic (its variance, not just
+        its mean, depends on utilization -- LM=21.231, p=0.0005, see
+        compliance_check.md) -- a dependence beta's mean-residual pricing
+        cannot remove by construction, no matter how the curve is refit.
+        Rather than keep chasing that out of delay_residual, zeta prices it
+        directly via NetworkState.get_delay_jitter_score(): a rolling-window
+        std of this link's own recent delay residuals, a real, observable
+        data-plane instability signal distinct from delta (which measures
+        control-plane reroute activity, not measurement volatility -- a link
+        can be jittery without ever having been rerouted around).
+        zeta=0.05 is a starting default matching delta/epsilon's magnitude,
+        not yet tuned by weight_search_comparison.py (still open, see
+        pending task notes) -- weights now sum to 1.05, not 1.0.
         """
         if link_stats is None:
             return 1.0
@@ -218,6 +234,7 @@ class GraphBuilder:
         )
         instability = self.network_state.get_link_churn_score(link_id, now=now)
         reliability_penalty = 0.0 if link_stats.status == "up" else 1.0
+        jitter = self.network_state.get_delay_jitter_score(link_id, now=now)
 
         raw_cost = (
             self.weights["alpha"] * utilization
@@ -225,6 +242,7 @@ class GraphBuilder:
             + self.weights["gamma"] * loss_residual
             + self.weights["delta"] * instability
             + self.weights["epsilon"] * reliability_penalty
+            + self.weights.get("zeta", 0.0) * jitter
             + 0.001
         )
         return max(raw_cost, self.MIN_EDGE_COST)

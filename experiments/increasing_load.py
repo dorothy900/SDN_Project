@@ -64,7 +64,7 @@ class IncreasingLoadScenario:
         for sample in range(1, SAMPLES + 1):
             now_s = sample * SAMPLE_INTERVAL_S
             load_factor = 0.10 + (0.90 - 0.10) * (sample - 1) / (SAMPLES - 1)
-            set_link_condition(state, hotspot_link, utilization=load_factor)
+            set_link_condition(state, hotspot_link, utilization=load_factor, now=now_s)
 
             for algorithm in algorithms:
                 driver = drivers[algorithm]

@@ -92,22 +92,22 @@ class FailureRecoveryScenario:
                 failure_active = failure_active or (sample == FLAP_DOWN_SAMPLE)
 
             if sample == RESTORE_SAMPLE:
-                set_link_condition(state, failed_link, status="up")
+                set_link_condition(state, failed_link, status="up", now=now_s)
                 proposed.on_link_recovered(failed_link, now_s)
                 topology_changed = True
             if unstable and sample == FLAP_DOWN_SAMPLE:
-                set_link_condition(state, failed_link, status="down")
+                set_link_condition(state, failed_link, status="down", now=now_s)
                 proposed.on_link_flap()
                 topology_changed = True
             if unstable and sample == FLAP_RESTORE_SAMPLE:
-                set_link_condition(state, failed_link, status="up")
+                set_link_condition(state, failed_link, status="up", now=now_s)
                 proposed.on_link_recovered(failed_link, now_s)
                 topology_changed = True
 
             results: Dict[str, Dict[str, object]] = {"static": static.step()}
 
             if sample == FAILURE_SAMPLE:
-                set_link_condition(state, failed_link, status="down")
+                set_link_condition(state, failed_link, status="down", now=now_s)
                 results["dynamic"] = dynamic.step(now_s=now_s, topology_changed=True)
                 t0 = time.perf_counter()
                 proposed_action = proposed.on_link_failure(failed_link, now_s)

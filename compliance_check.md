@@ -1143,6 +1143,83 @@ LOESS alternative.
 
 ---
 
+## New cost-formula term: zeta * delay-jitter (2026-08-19)
+
+Rather than keep trying to remove the confirmed heteroscedasticity from
+delay_residual (structurally impossible for a residual-pricing design, per
+the section above), priced it directly as its own signal instead --
+"a link whose delay has recently been bouncing around a lot is itself a
+form of instability" fits this project's stability-aware framing directly.
+
+**Design decisions, made explicitly before implementing:**
+- **Measurement: real-time rolling-window empirical std**, not a static
+  curve fit as a function of utilization. A curve (like congestion_model's
+  delay/loss curves) would only express "this utilization level tends to be
+  jittery on average" and inherit the same small-n/single-link confound the
+  delay curve refit above never fully resolved. A rolling window over each
+  link's own recent observations is the same design already used for delta
+  (`LinkChurnTracker`) and directly reflects *this* link's *current* real
+  behavior.
+- **A genuinely new weight (zeta), not folded into delta.** Delta already
+  has a specific, tested meaning: control-plane reroute activity (how often
+  a link has recently been switched into/out of an installed path). This
+  new signal is data-plane measurement volatility -- a link can be jittery
+  without ever having been rerouted around, or vice versa. Conflating them
+  would blur two empirically distinct things sharing only the word
+  "instability."
+
+**Implementation:**
+- `src/monitor/delay_jitter_tracker.py` (new): `DelayJitterTracker`, same
+  rolling-window pattern as `LinkChurnTracker` (timestamped samples in a
+  deque, evict past `window_seconds` on read). Normalizes rolling sample std
+  (ms) to [0,1] via `saturation_ms=150.0` (informed by the diagnostic's
+  observed residual std range, ~60-170ms across utilization quintiles),
+  returns 0.0 below `min_samples=3` (cold start -- no evidence of
+  instability yet, not an artificially high default).
+- `NetworkState.update_link_statistics()` now computes each sample's delay
+  residual (`delay_ms - predicted_delay_ms(utilization)`, the exact
+  quantity the Breusch-Pagan test above was run against) and feeds it to
+  the tracker automatically -- no caller needs to call a separate recording
+  method by hand on every monitoring update.
+- `GraphBuilder._calculate_edge_cost` adds
+  `zeta * network_state.get_delay_jitter_score(link_id, now=now)` to the
+  cost sum. `zeta=0.05` (config/decision.yaml and both Python-side
+  defaults) matches delta/epsilon's magnitude as a starting point -- **not
+  yet tuned**; weights now sum to 1.05, not 1.0.  `weight_search_comparison.py`
+  needs to be rerun with this 6th dimension (already on the open task list
+  for other reasons).
+
+**A real bug found and fixed while wiring this up, same shape as the
+2026-08-12 churn `now`-facade bug, mirror-imaged:** `update_link_statistics`
+initially always recorded jitter samples against real wall-clock time
+(`link_stats.timestamp`), while `_calculate_edge_cost` reads jitter through
+whatever `now` a caller threads in -- a small synthetic `now_s` in every
+offline scenario experiment. Recording-real/reading-synthetic (rather than
+the churn bug's recording-synthetic/reading-real) doesn't make the signal
+always 0 -- it makes the eviction cutoff always smaller than every real
+timestamp, so **the window never rolls at all**: samples accumulate for the
+entire experiment run instead of reflecting the last `window_seconds`.
+Confirmed live (120 samples recorded across a simulated long run all stayed
+in the window at a synthetic `now=1000.0`, none evicted). Fixed by threading
+an explicit `now` parameter through `update_link_statistics()` and
+`experiments/simulation_common.py`'s `set_link_condition()`, and passing
+each caller's `now_s` at all 20 real call sites across
+`congestion.py`/`increasing_load.py`/`stale_stats.py`/
+`sensitivity_analysis.py`/`decision_churn_independence.py`/
+`joint_independence_matrix.py`/`failure_recovery.py`. Verified fixed:
+recording+reading under a consistent synthetic clock now shows real
+dispersion (score 0.31 for a 3-sample burst) and correctly evicts 100
+synthetic seconds later (score back to 0.0).
+
+11 new tests (`tests/delay_jitter_tracker.py`, 2 more in
+`tests/network_state.py`), 107/107 passing. Verified `decision_engine_check.py`,
+`increasing_load.py`, `joint_independence_matrix.py`, and
+`decision_churn_independence.py` all still run end-to-end with consistent
+results (u-churn/churn-reliability findings unchanged from before this
+change).
+
+---
+
 ## Final Verdict
 
 **✅ Weeks 1–6 are implemented and passing (48/48 tests), Stage 6's comparative

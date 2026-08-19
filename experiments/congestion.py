@@ -98,7 +98,7 @@ class CongestionScenario:
         for sample in range(1, total_samples + 1):
             now_s = sample * SAMPLE_INTERVAL_S
             utilization = SPIKE_UTILIZATION if sample in congestion_samples else BASELINE_UTILIZATION
-            set_link_condition(state, hotspot_link, utilization=utilization)
+            set_link_condition(state, hotspot_link, utilization=utilization, now=now_s)
 
             for algorithm in algorithms:
                 driver = drivers[algorithm]

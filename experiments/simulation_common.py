@@ -115,6 +115,7 @@ def set_link_condition(
     timestamp: Optional[datetime] = None,
     delay_bump_ms: Optional[float] = None,
     loss_bump: Optional[float] = None,
+    now: Optional[float] = None,
 ) -> None:
     """
     Overwrite one link's live statistics, preserving whatever isn't specified.
@@ -129,6 +130,12 @@ def set_link_condition(
     delay/loss cost weights) had no real signal to respond to in any pilot
     scenario. Pass delay_bump_ms/loss_bump explicitly to bypass this and set
     an exact value instead (e.g. injecting an isolated, non-congestion event).
+
+    now: forwarded to NetworkState.update_link_statistics's jitter-tracker
+    clock (added 2026-08-19 alongside zeta/delay-jitter). Pass the same
+    synthetic now_s a caller drives the rest of a scenario with -- see
+    update_link_statistics's docstring for what silently breaks if this is
+    left at the real-time default in an offline, synthetic-clock experiment.
     """
     old = state.get_link_stats(link_id_str)
     resolved_utilization = utilization if utilization is not None else (float(old.utilization) if old else 0.2)
@@ -153,7 +160,8 @@ def set_link_condition(
             status=resolved_status,
             delay_ms=round(resolved_delay, 4),
             packet_loss=round(min(0.3, resolved_loss), 6),
-        )
+        ),
+        now=now,
     )
     if status is not None:
         state.set_link_status(link_id_str, is_up=(status == "up"))

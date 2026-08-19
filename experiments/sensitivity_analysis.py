@@ -158,7 +158,7 @@ class SensitivityAnalysis:
                 total_updates = 0
                 for sample in range(1, RAMP_SAMPLES + 1):
                     load_factor = 0.10 + (0.90 - 0.10) * (sample - 1) / (RAMP_SAMPLES - 1)
-                    set_link_condition(state, hotspot_link, utilization=load_factor)
+                    set_link_condition(state, hotspot_link, utilization=load_factor, now=sample * SAMPLE_INTERVAL_S)
                     result = proposed.step(
                         now_s=sample * SAMPLE_INTERVAL_S,
                         hotspot_link=hotspot_link,
@@ -383,7 +383,7 @@ class SensitivityAnalysis:
                     total_updates = 0
                     for sample in range(1, RAMP_SAMPLES + 1):
                         load_factor = 0.10 + (0.90 - 0.10) * (sample - 1) / (RAMP_SAMPLES - 1)
-                        set_link_condition(state, hotspot_link, utilization=load_factor)
+                        set_link_condition(state, hotspot_link, utilization=load_factor, now=sample * SAMPLE_INTERVAL_S)
                         result = proposed.step(
                             now_s=sample * SAMPLE_INTERVAL_S,
                             hotspot_link=hotspot_link,

@@ -90,17 +90,17 @@ def run(output_dir: Path = Path("results/joint_independence_matrix")) -> Dict[st
         campaign["now_s"] += SAMPLE_INTERVAL_S
 
         if event == "congest" and not campaign["failed"]:
-            set_link_condition(state, link, utilization=CONGESTED_UTILIZATION)
+            set_link_condition(state, link, utilization=CONGESTED_UTILIZATION, now=campaign["now_s"])
             driver.step(now_s=campaign["now_s"], hotspot_link=link, hotspot_utilization=CONGESTED_UTILIZATION)
         elif event == "relieve" and not campaign["failed"]:
-            set_link_condition(state, link, utilization=BASELINE_UTILIZATION)
+            set_link_condition(state, link, utilization=BASELINE_UTILIZATION, now=campaign["now_s"])
             driver.step(now_s=campaign["now_s"], hotspot_link=link, hotspot_utilization=BASELINE_UTILIZATION)
         elif event == "fail" and not campaign["failed"]:
-            set_link_condition(state, link, status="down")
+            set_link_condition(state, link, status="down", now=campaign["now_s"])
             driver.on_link_failure(link, campaign["now_s"])
             campaign["failed"] = True
         elif event == "recover" and campaign["failed"]:
-            set_link_condition(state, link, status="up", utilization=BASELINE_UTILIZATION)
+            set_link_condition(state, link, status="up", utilization=BASELINE_UTILIZATION, now=campaign["now_s"])
             driver.on_link_recovered(link, campaign["now_s"])
             campaign["now_s"] += RECOVERY_WINDOW_BUFFER_S
             driver.step(now_s=campaign["now_s"])
