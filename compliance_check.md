@@ -1461,6 +1461,113 @@ status is still open.)
 
 ---
 
+## u-churn residualization: tried both OLS and LOESS, neither works (2026-08-19)
+
+Considered extending the residual-pricing pattern (already used for
+delay/loss) to delta: instead of pricing raw `churn_score`, price
+`churn_score - predicted(churn_score | u)`, to remove the weak leftover
+u-churn dependency found earlier (dCor=0.340, p=0.0044 in
+`decision_churn_independence.py`'s post-bugfix data).
+
+**A conceptual caveat flagged before testing:** unlike delay/loss (real,
+exogenous physical measurements independent of this project's own
+decisions), `churn_score` is *produced by* the decision engine this cost
+formula drives. Any `predicted(churn|u)` curve fit from data generated
+under the current delta weight reflects that specific policy's behavior --
+changing delta would change future churn generation, so the fitted curve
+is not guaranteed to stay valid the way `predicted_delay_ms(u)`'s physical
+queueing relationship does. A real, if likely second-order, circularity
+risk that delay/loss residualization doesn't have.
+
+**Tested anyway, on the dataset where the dependency is actually present
+(n=75):**
+```
+Before:            Spearman=0.163(p=0.17)  dCor=0.3398(p=0.0044)
+After OLS residual: Spearman=0.029(p=0.81)  dCor=0.3441(p=0.0038)  -- dCor unchanged
+After LOESS residual: Spearman=0.152(p=0.19) dCor=0.3532(p=0.0025) -- dCor slightly worse
+```
+Neither method touches dCor at all -- OLS kills the (weak) linear
+component (Spearman drops sharply) but the dependence itself is
+non-monotonic, and LOESS -- normally effective on non-monotonic structure
+(see the delay-residual hump-diagnosis section) -- doesn't help here
+either. Plausible reason: `churn_score` is a discrete, threshold-gated
+count (crosses a utilization threshold, then subject to hysteresis/
+persistence/hold-down/change-budget gates before a reroute fires), not a
+continuous physical process the way queueing delay is -- there may not be
+a smooth curve of any shape for a curve-fitter to find.
+
+Cross-checked on a second, larger dataset
+(`hybrid_congestion_churn_matrix.py`, n=213): the baseline u-churn
+dependency wasn't even significant there (dCor=0.1182, p=0.1681) --
+consistent with this being a modest, somewhat unstable-across-samples
+effect to begin with.
+
+**Decision: do not implement.** Two independent reasons converge: the
+circularity risk (untested but real), and the empirical fact that neither
+tested method removes any of the dependency on the data where it's
+actually present. Delta stays priced on raw `churn_score`, unresidualized.
+
+---
+
+## churn vs zeta/eta under real independent measurement: the offline coupling was fake too (2026-08-19)
+
+Closes the item left open earlier: `hybrid_congestion_churn_matrix.py`
+(n=213) found churn_score significantly correlated with both jitter scores
+(dCor 0.30-0.40) -- but that experiment's delay/loss come from the same
+nearest-neighbor lookup mechanism already shown (in the zeta/eta pass
+above) to manufacture correlations that don't survive independent
+measurement. Churn itself in that experiment is also DecisionEngine-driven
+but shares the same `NetworkState`/globally-shuffled-event machinery as
+the disjoint-link bug -- reason enough to distrust this finding without a
+real check.
+
+**Built `scripts/mininet_churn_jitter_check.py`**: real ping-based delay +
+real qdisc-based loss (same as `mininet_jitter_check.py`), plus real churn
+events recorded via the actual production call
+(`NetworkState.record_link_churn()`) at times drawn from an independently-
+randomized schedule (~40% chance per sample, using a separate RNG stream
+from the traffic schedule) -- not from a real closed-loop DecisionEngine.
+**Scope decision, stated explicitly:** building a full real routing/
+decision stack (real candidate paths, real FlowInstaller, real threshold/
+hysteresis/hold-down gating) was judged unnecessary for this specific
+question -- what matters for testing "does a churn event's aftermath
+correlate with subsequent real jitter" is that churn timing is independent
+of the traffic pattern being measured, which an independently-randomized
+schedule satisfies as directly as a real DecisionEngine would (which also
+churns based on utilization crossings, not on delay/loss dispersion).
+
+**Result (56 real samples, 19 independent churn events):**
+```
+churn_score vs delay_jitter_score: Spearman=-0.0736 (p=0.5817), dCor=0.1389 (p=0.7182)
+churn_score vs loss_jitter_score:  Spearman=-0.0362 (p=0.7841), dCor=0.1610 (p=0.4961)
+```
+Both not significant. **Same pattern as the zeta/eta result: the offline
+hybrid experiment's significant correlation did not survive independent
+real measurement.**
+
+**Meta-finding, worth stating plainly for the dissertation:** every
+correlation this session found via the offline injection-based hybrid
+framework, when re-tested under genuinely independent real measurement,
+turned out not to be real (delay_jitter-loss_jitter first, now
+churn-jitter). The framework has a structural bias toward manufacturing
+spurious correlations, from sharing generation mechanisms (nearest-
+neighbor lookup, shared `NetworkState` across campaigns) rather than
+measuring independently -- any dependency finding produced by it should be
+treated as a hypothesis to verify with real, independent measurement, not
+a conclusion on its own.
+
+**Current status of all delta/zeta/eta pairwise relationships:**
+- delta vs epsilon: independent (confirmed, multiple real/offline reruns)
+- zeta vs eta: independent (confirmed under real independent measurement)
+- delta vs zeta, delta vs eta: independent (confirmed under real
+  independent measurement, this section)
+- delta vs u: weak non-monotonic residual dependence (dCor~0.34 where
+  present, but not consistently significant across datasets); attempted
+  residualization, rejected as ineffective (see previous section) --
+  left unaddressed, priced as raw churn_score
+
+---
+
 ## Final Verdict
 
 **✅ Weeks 1–6 are implemented and passing (48/48 tests), Stage 6's comparative
