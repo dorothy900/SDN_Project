@@ -28,6 +28,7 @@ class NetworkState:
         self,
         output_dir: Path = Path("results/network_state"),
         history_window_size: int = 60,
+        jitter_settle_window_seconds: float = 10.0,
     ):
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -37,6 +38,17 @@ class NetworkState:
         self.history = HistoryStore(window_size=history_window_size, output_dir=output_dir)
         self.link_churn = LinkChurnTracker()
         self.delay_jitter = DelayJitterTracker()
+        # How long after a link was last churned (added to/removed from an
+        # installed path) to exclude its delay samples from jitter tracking
+        # -- see update_link_statistics. Defaults to the same magnitude as
+        # config/decision.yaml's hold_down.duration_seconds (10s), the
+        # closest existing "how long until things settle after a switch"
+        # concept in this project, though not literally coupled to it --
+        # hold_down is scoped per src-dst flow pair inside
+        # DecisionEngine/StabilityManager, not per link, and NetworkState
+        # (monitor layer) shouldn't reach up into the decision layer's
+        # state to read it.
+        self.jitter_settle_window_seconds = jitter_settle_window_seconds
 
         self.last_update_time: Optional[datetime] = None
 
@@ -123,11 +135,21 @@ class NetworkState:
         # Feed the jitter tracker with this sample's delay residual, so
         # get_delay_jitter_score() reflects real, current per-link
         # dispersion (see DelayJitterTracker's docstring for why this
-        # exists).
+        # exists) -- but skip samples taken while this link is still within
+        # its post-switch settle window (added 2026-08-19). A switch event
+        # itself can cause a real, transient delay blip that has nothing to
+        # do with steady-state jitter; recording it here would let delta
+        # (control-plane churn) and zeta (data-plane jitter) partly
+        # double-count the same underlying reroute event instead of
+        # measuring two genuinely distinct things.
         if link_stats.delay_ms is not None:
-            residual_ms = float(link_stats.delay_ms) - predicted_delay_ms(float(link_stats.utilization))
             jitter_now = now if now is not None else link_stats.timestamp.timestamp()
-            self.record_delay_residual(link_stats.link_id, residual_ms, now=jitter_now)
+            settling = self.link_churn.has_changed_recently(
+                link_stats.link_id, within_seconds=self.jitter_settle_window_seconds, now=jitter_now
+            )
+            if not settling:
+                residual_ms = float(link_stats.delay_ms) - predicted_delay_ms(float(link_stats.utilization))
+                self.record_delay_residual(link_stats.link_id, residual_ms, now=jitter_now)
 
         self.last_update_time = link_stats.timestamp
     

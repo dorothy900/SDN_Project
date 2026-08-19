@@ -76,3 +76,40 @@ def test_update_link_statistics_feeds_the_jitter_tracker_automatically():
             )
         )
     assert state.get_delay_jitter_score("0-2", now=ts.timestamp()) > 0.0
+
+
+def test_samples_during_the_post_switch_settle_window_are_excluded_from_jitter():
+    """
+    A switch event itself can cause a real, transient delay blip unrelated
+    to steady-state jitter. Samples taken while a link is still within its
+    jitter_settle_window_seconds of its last churn should not be recorded,
+    so delta (control-plane churn) and zeta (data-plane jitter) don't
+    partly double-count the same reroute event.
+    """
+    state = NetworkState(jitter_settle_window_seconds=10.0)
+    u = 0.3
+    predicted = predicted_delay_ms(u)
+    state.record_link_churn("0-2", timestamp=100.0)
+
+    # samples taken *during* the settle window (still within 10s of the
+    # churn event) -- deliberately dispersed, but should be ignored
+    for t, bump in [(101.0, -80.0), (105.0, 0.0), (109.0, 80.0)]:
+        state.update_link_statistics(
+            LinkStatistics(
+                timestamp=datetime.fromtimestamp(t), link_id="0-2", utilization=u,
+                rx_mbps=10.0, tx_mbps=10.0, delay_ms=predicted + bump,
+            ),
+            now=t,
+        )
+    assert state.get_delay_jitter_score("0-2", now=109.0) == 0.0  # nothing recorded yet
+
+    # samples taken *after* the settle window has passed -- should count
+    for t, bump in [(115.0, -80.0), (116.0, 0.0), (117.0, 80.0)]:
+        state.update_link_statistics(
+            LinkStatistics(
+                timestamp=datetime.fromtimestamp(t), link_id="0-2", utilization=u,
+                rx_mbps=10.0, tx_mbps=10.0, delay_ms=predicted + bump,
+            ),
+            now=t,
+        )
+    assert state.get_delay_jitter_score("0-2", now=117.0) > 0.0

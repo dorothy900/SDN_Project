@@ -51,3 +51,29 @@ def test_rejects_non_positive_window():
 def test_rejects_non_positive_saturation_count():
     with pytest.raises(ValueError, match="saturation_count"):
         LinkChurnTracker(saturation_count=0)
+
+
+def test_has_changed_recently_true_within_the_window():
+    tracker = LinkChurnTracker()
+    tracker.record_change("s1-s2", now=100.0)
+    assert tracker.has_changed_recently("s1-s2", within_seconds=10.0, now=105.0) is True
+
+
+def test_has_changed_recently_false_past_the_window():
+    tracker = LinkChurnTracker()
+    tracker.record_change("s1-s2", now=100.0)
+    assert tracker.has_changed_recently("s1-s2", within_seconds=10.0, now=111.0) is False
+
+
+def test_has_changed_recently_false_when_never_changed():
+    tracker = LinkChurnTracker()
+    assert tracker.has_changed_recently("s1-s2", within_seconds=10.0, now=100.0) is False
+
+
+def test_has_changed_recently_does_not_mutate_state():
+    """Unlike get_churn_score, this should be a pure read -- calling it
+    shouldn't evict entries that get_churn_score would still want to count."""
+    tracker = LinkChurnTracker(window_seconds=60.0, saturation_count=5)
+    tracker.record_change("s1-s2", now=0.0)
+    tracker.has_changed_recently("s1-s2", within_seconds=1.0, now=1000.0)
+    assert tracker.get_churn_score("s1-s2", now=0.0) == pytest.approx(1 / 5)

@@ -1218,6 +1218,29 @@ synthetic seconds later (score back to 0.0).
 results (u-churn/churn-reliability findings unchanged from before this
 change).
 
+**Post-switch settle window: keeping delta and zeta from double-counting
+the same reroute event (2026-08-19, user-proposed).** A switch itself can
+cause a real, transient delay blip (buffer flush, brief burst) that has
+nothing to do with steady-state jitter -- recording it would let delta
+(control-plane churn) and zeta (data-plane jitter) both react to the same
+underlying event instead of measuring two genuinely distinct things.
+Considered reusing `config/decision.yaml`'s `hold_down.duration_seconds`
+(10s, the closest existing "how long until things settle after a switch"
+concept) directly, but it's scoped per src-dst *flow pair* inside
+`DecisionEngine`/`StabilityManager`, not per *link* -- and `NetworkState`
+(monitor layer) shouldn't reach up into the decision layer's mutable state
+to read it. Instead added `LinkChurnTracker.has_changed_recently(link_id,
+within_seconds, now)` -- a non-mutating peek at that link's own most
+recently recorded churn timestamp (deliberately not reusing
+`get_churn_score`'s eviction side effects) -- and a new
+`NetworkState.jitter_settle_window_seconds` (default 10.0, same magnitude
+as hold_down, not literally coupled to it). `update_link_statistics` now
+skips feeding the jitter tracker entirely while a link is within that
+window of its own last churn event. 5 new tests (4 in
+`tests/link_churn_tracker.py`, 1 integration test in `tests/network_state.py`
+proving samples during the window are dropped and samples after it are
+kept), 112/112 passing.
+
 ---
 
 ## Final Verdict
