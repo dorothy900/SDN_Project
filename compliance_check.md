@@ -1123,6 +1123,24 @@ parametric curve (`scale_ms=120.174`, `BASELINE_DELAY_MS=34.062`,
 LOESS analysis stands as a diagnostic result explaining *why* the residual
 doesn't fully vanish, not as an implemented alternative.
 
+**Breusch-Pagan test, formally confirming the heteroscedasticity (2026-08-19).**
+The "variance rises 2.7x" observation above was a descriptive quintile
+comparison; formalized it with a proper test. Implemented in pure numpy
+(White-style: auxiliary regression of squared residuals on `[1, u, u^2]`,
+LM statistic = n * R^2 of that regression, p-value via 9999-permutation
+test rather than the asymptotic chi-square approximation, since exact
+permutation p-values don't depend on that approximation holding at this
+sample size):
+
+```
+Production (Theil-Sen) residual: LM=21.231, aux R^2=0.109, p=0.0005
+LOESS residual:                  LM=12.147, aux R^2=0.062, p=0.0071
+```
+
+Both significant — heteroscedasticity is now a formally tested finding, not
+just a descriptive pattern, for both the currently-deployed curve and the
+LOESS alternative.
+
 ---
 
 ## Final Verdict
