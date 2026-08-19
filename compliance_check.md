@@ -1568,6 +1568,60 @@ a conclusion on its own.
 
 ---
 
+## delay_residual vs loss_residual: a real dependency this time, not an offline artifact (2026-08-19)
+
+Unlike the two false-positive couplings found this session (delay_jitter-
+loss_jitter, churn-jitter -- both traced to injection-mechanism artifacts
+in the offline hybrid framework), this one didn't need a new live Mininet
+run to test properly: `results/independence_check/` and
+`results/loss_saturation_check/` already have real delay (ping) and real
+loss (tc-qdisc) measured via **separate mechanisms** on the same real
+congestion events -- not from a shared lookup, so not vulnerable to that
+specific artifact.
+
+**Result (n=221, real samples, the one confirmed-influential outlier
+excluded):**
+```
+delay_residual vs loss_residual: Spearman=0.4669 (p=0.0001), dCor=0.6442 (p=0.0001)
+```
+Strong and significant. Physically sensible: when a link's real congestion
+exceeds what utilization alone predicts, that excess plausibly shows up as
+both extra delay *and* extra loss simultaneously -- the same underlying
+anomaly, not two independent draws. **A real, previously unaddressed
+overlap between beta and gamma's terms** -- structurally the same kind of
+double-counting concern that motivated the original residual-pricing
+redesign, just between the two residuals themselves rather than between
+utilization and each residual.
+
+**Attempted the same residualize-then-diagnose pipeline used throughout
+this session:**
+- OLS (`loss_residual = a + b*delay_residual`): slope b=+0.000874,
+  correctly signed (worse delay -> worse loss). Residualizing brought
+  dCor down to 0.5396 -- only a ~16% reduction, and Spearman's sign
+  flipped (0.467 -> -0.296), signaling the true relationship isn't simply
+  linear.
+- LOESS: dCor=0.5626 -- essentially the same as OLS, not meaningfully
+  better.
+- Breusch-Pagan on the OLS-residualized remainder: **LM=26.983, p=0.0017,
+  significant** -- heteroscedasticity again. Residual std by
+  delay_residual tercile: 0.059 / 0.033 / 0.207 -- the top tercile's
+  variance is ~6x the middle's.
+
+**Decision: do not implement in production.** The 16% reduction is real
+and correctly-signed, but implementing it would make `loss_residual`
+depend on `delay_residual` (a new ordering/coupling between beta and
+gamma's inputs, two more fitted constants to maintain) for a partial fix
+that leaves the larger, heteroscedastic share of the overlap untouched
+regardless. Consistent with this session's standing rule (see the loss
+curve fit and u-churn residualization rejections): a real but modest,
+incomplete effect isn't enough on its own to justify added formula
+complexity. Recorded as a known, quantified, real (not artifactual)
+overlap between beta and gamma -- unlike delta-u, this one did NOT require
+a new live experiment to confirm, since independently-measured real data
+already existed for it.
+
+---
+
 ## Final Verdict
 
 **✅ Weeks 1–6 are implemented and passing (48/48 tests), Stage 6's comparative
