@@ -60,16 +60,33 @@ def run(output_dir: Path = Path("results/joint_independence_matrix")) -> Dict[st
     output_dir.mkdir(parents=True, exist_ok=True)
     state = build_network_state(output_dir, seed=RANDOM_SEED)
     builder = GraphBuilder(state)
-    pairs = builder.select_test_pairs(limit=NUM_PAIRS, min_candidate_paths=2)
+    # Over-fetch candidates -- select_test_pairs alone doesn't know about
+    # "first link" disjointness, so some of the first NUM_PAIRS pairs it
+    # returns can share a real link (found 2026-08-19: 4 of the default 6
+    # pairs all had "0-4" as their first hop). Since every campaign below
+    # writes to the SAME NetworkState and events across ALL campaigns are
+    # interleaved in one shuffled global order, two campaigns sharing a
+    # link corrupt each other's (utilization, delay) pairing -- whichever
+    # campaign's set_link_condition() ran most recently silently overwrites
+    # what the other just set, before either gets read back. Confirmed live:
+    # this was why a PCA fit on this data gave a near-zero loss_residual
+    # loading -- not a real finding, cross-campaign noise.
+    candidate_pairs = builder.select_test_pairs(limit=NUM_PAIRS * 8, min_candidate_paths=2)
 
     rng = random.Random(RANDOM_SEED)
     campaigns = []
-    for src, dst in pairs:
+    used_links: set = set()
+    for src, dst in candidate_pairs:
+        if len(campaigns) >= NUM_PAIRS:
+            break
         drivers = make_drivers(state, src, dst, threshold=0.7, persistence_required_samples=1)
         driver = drivers["proposed"]
         if not driver.path or len(driver.path) < 2:
             continue
         first_link = link_id(driver.path[0], driver.path[1])
+        if first_link in used_links:
+            continue
+        used_links.add(first_link)
         schedule = [rng.choice(EVENT_TYPES) for _ in range(EVENTS_PER_PAIR)]
         campaigns.append({
             "src": src, "dst": dst, "driver": driver, "link": first_link,

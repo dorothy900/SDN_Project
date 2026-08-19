@@ -1243,6 +1243,175 @@ kept), 112/112 passing.
 
 ---
 
+## ERRATUM: campaigns sharing a real link contaminated the u-churn finding; bug fixed, result corrected (2026-08-19)
+
+While preparing real (u, delay_residual, loss_residual, churn) data to fit a
+PCA composite congestion indicator (see next section), a PCA on
+`joint_independence_matrix.py`'s data came back with a near-zero
+loss_residual loading -- investigating why surfaced a real, previously
+undetected bug affecting **every prior run of both
+`decision_churn_independence.py` and `joint_independence_matrix.py`**.
+
+**The bug:** `select_test_pairs(limit=NUM_PAIRS, ...)` picks src-dst pairs
+without any notion of whether their first hop links overlap. Confirmed
+live: with the default 6 pairs, link "0-4" was the first hop for **4
+different campaigns** (`0->11`, `0->13`, `0->14`, `0->12`) simultaneously.
+Since every campaign writes to the *same* `NetworkState` and all campaigns'
+events are interleaved in one globally shuffled order, two campaigns
+sharing a link silently overwrite each other's `set_link_condition()` calls
+before either reads back its own -- the recorded (utilization, delay,
+churn) tuples for a shared link reflect whichever campaign wrote most
+recently, not a clean causal chain from any single campaign's own actions.
+
+**Fix:** both scripts now over-fetch candidates (`NUM_PAIRS * 8`) and
+de-duplicate by first-hop link before accepting a campaign, so all selected
+campaigns' first links are guaranteed disjoint.
+
+**Result changed materially -- correcting a finding cited multiple times
+earlier in this document and in memory:**
+
+```
+Before fix (contaminated):  rho(u, churn_score) = 0.480, p=0.0001  -- reported as "significant"
+After fix:                  rho(u, churn_score) = 0.163, p=0.1705  -- NOT significant
+                             dCor(u, churn_score) = 0.340, p=0.0044 -- still significant
+```
+
+**The strong monotonic u-churn relationship reported earlier was
+substantially a bug artifact and should be walked back.** What survives:
+a weaker, non-monotonic dependency (dCor significant, Spearman not) --
+plausible given DecisionEngine's threshold-crossing reroute logic is a
+discrete/step decision, not a smooth function of utilization, so a
+non-monotonic relationship between u and how often a link gets churned is
+physically sensible.
+
+**What did NOT change** (re-verified on the corrected data, both scripts
+consistent): **churn_score vs reliability_down remains not significant**
+(rho=0.133, p=0.243 in the corrected run vs 0.037, p=0.747 before) -- the
+core delta-epsilon independence conclusion this session repeatedly leaned
+on survives the fix intact. Also note n dropped slightly (75 samples/5
+campaigns instead of 90/6) since one candidate pair had to be skipped after
+its first-hop link collided with an already-accepted campaign's.
+
+112/112 tests still passing (the fix only touched candidate-selection logic
+in the two experiment scripts, no production code).
+
+---
+
+## Composite congestion indicator: PCA on u/delay_residual/loss_residual/churn -- tried, and reverted (2026-08-19)
+
+Per explicit direction: rather than keep utilization/delay_residual/
+loss_residual/churn as 4 separate weighted terms (a VIF analysis earlier
+this session found them jointly near-collinear -- not independent
+information, different facets of the same congestion event), attempted to
+merge them into one composite via PCA. **Implemented, tested end to end,
+then reverted the same day** after the composite was found to invert two
+of this project's core cost-formula invariants. Recorded in full since the
+dead ends and the reversal are themselves the substantive finding here, not
+a footnote.
+
+**Data problem #1: no dataset had all 4 variables with real, non-degenerate
+variance together.** Real Mininet traffic (`results/independence_check/`,
+`results/loss_saturation_check/`) has real u/delay/loss residual structure
+but no DecisionEngine running -- no churn. The DecisionEngine-driven offline
+experiments (`decision_churn_independence.py` / `joint_independence_matrix.py`)
+have real churn but generate delay/loss directly from `congestion_model`'s
+own curve via `set_link_condition`'s default path -- their residuals are
+~0 by construction (confirmed: loss_residual's std was 0.00006 in that
+data), giving PCA no real variance to fit against (a first attempt produced
+a near-zero, meaningless loss_residual loading).
+
+**Data problem #2, found while investigating #1: a real, previously
+undetected bug.** `select_test_pairs()` doesn't check whether campaigns'
+first-hop links overlap -- confirmed live, link "0-4" was the first hop for
+4 different campaigns simultaneously. Since all campaigns write to one
+shared `NetworkState` with events interleaved in one global shuffled order,
+sharing a link lets one campaign silently overwrite another's just-set
+state before either reads it back. This also **corrected a finding cited
+multiple times earlier in this document**: `rho(u, churn_score)` dropped
+from 0.480 (p=0.0001, reported as significant) to 0.163 (p=0.17, not
+significant) once fixed -- see the ERRATUM section above for the full
+before/after and what survived (churn-reliability independence, unaffected).
+Fixed in both experiment scripts by over-fetching candidates and
+de-duplicating by first-hop link.
+
+**Bridged the two data sources:** built
+`experiments/hybrid_congestion_churn_matrix.py` -- real DecisionEngine-driven
+churn campaigns (with the disjoint-link fix), but delay/loss injected via
+`set_link_condition`'s new `delay_ms_override`/`loss_override` params using
+the real Mininet sample whose achieved_utilization is closest to the
+target, instead of the formula. Two more data-quality issues surfaced and
+were fixed along the way: (a) down-link samples carry a stale, frozen delay
+value from before the failure (no traffic flowing, nothing real to
+measure) -- excluding them fixed a spurious `delay_residual` vs
+`reliability_down` correlation that had hit rho=0.872 (VIF>3000); (b) the
+original script used fixed congest/relieve utilization targets
+(0.85/0.3), which made the nearest-neighbor lookup return the *same* real
+sample every time, collapsing delay_residual/loss_residual to ~2 distinct
+points (a trivial "line through 2 points" gives -1.000 correlation between
+them) -- fixed by sampling target utilization from a range each event
+instead of a fixed constant.
+
+**PCA fit on the resulting clean data (n=28, 5 campaigns, down-link samples
+excluded -- small; a first pass):**
+```
+PC1 explains 43.6% of variance (4-variable version: u, delay_residual, loss_residual, churn_score)
+Loadings: utilization +0.397, delay_residual -0.711, loss_residual -0.307, churn -0.493
+```
+
+**Implemented in production** (`congestion_model.congestion_index()`,
+`GraphBuilder`'s kappa term replacing alpha/beta/gamma/delta,
+`LossJitterTracker`/eta added alongside zeta for loss's heteroscedasticity,
+following the same Breusch-Pagan-confirmed reasoning as delay's) and
+verified mechanically sound (VIF 1.3-2.9 in the final 3-variable version,
+no more degenerate values, 96/96 unrelated tests untouched).
+
+**Then reverted, after concrete behavioral checks:**
+- `test_churned_link_costs_more_than_an_identical_untouched_link` failed:
+  recording 2 churn events dropped a link's cost from 0.480 to 0.001 (the
+  MIN_EDGE_COST floor) -- churn's negative PC1 loading meant **more churn
+  made a link look cheaper**, the exact opposite of what this term exists
+  to do. User-confirmed this directly conflicts with the stability-aware
+  framework's purpose; agreed to extract churn back out as an independent
+  delta term rather than accept the sign as PCA found it.
+- Refit PCA on the remaining 3 variables (u, delay_residual, loss_residual)
+  -- **delay_residual's loading was also negative** (-0.763, the largest
+  magnitude of the three). Verified concretely: `composite(u=0.5,
+  delay_residual=0)` = -0.084, `composite(u=0.5, delay_residual=+300ms)` =
+  -1.671 -- a link with real delay running 300ms worse than its utilization
+  predicts scores as *more* attractive, directly inverting the exact
+  invariant beta's residual design was built to guarantee (the same one
+  `test_link_with_anomalous_delay_beyond_prediction_costs_more` tests).
+- Presented this second inversion; decided to abandon the composite
+  entirely rather than extract variables one at a time as each sign
+  conflict surfaced -- PCA's variance-maximizing objective has no reason to
+  align with "worse measured congestion should cost more," and two
+  invariant violations out of three non-utilization inputs suggested this
+  wasn't a one-off.
+
+**Reverted to the pre-PCA formula** (`git checkout` of
+`graph_builder.py`/`path_cost.py`/`congestion_model.py`/`config/decision.yaml`
+back to the last clean commit, `eta`/loss-jitter re-added on top since that
+change doesn't share the composite's problem -- it's a variance-based term,
+always non-negative, no sign to invert). Current formula:
+`alpha*u + beta*delay_residual + gamma*loss_residual + delta*churn +
+epsilon*reliability + zeta*delay_jitter + eta*loss_jitter`, 7 separate
+weighted terms, none merged. `experiments/hybrid_congestion_churn_matrix.py`
+and the campaign disjoint-link fix are kept -- both are real, standalone
+value (a genuine bug fix; a reusable real+real data-bridging tool) even
+though the composite they were built to support wasn't adopted.
+`congestion_model.congestion_index()` was removed (dead code once
+GraphBuilder no longer calls it).
+
+**Takeaway for anyone revisiting this:** VIF correctly identified real
+collinearity among these variables, but "jointly collinear" and "safe to
+compress into one variance-maximizing axis" are different claims -- the
+latter also needs the compressed axis to preserve whatever monotonic
+relationships downstream logic (and its tests) depend on, which PCA's
+objective does not guarantee and did not deliver here for 2 of 3 tested
+non-utilization inputs.
+
+---
+
 ## Final Verdict
 
 **✅ Weeks 1–6 are implemented and passing (48/48 tests), Stage 6's comparative

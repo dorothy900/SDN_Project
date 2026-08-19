@@ -116,6 +116,8 @@ def set_link_condition(
     delay_bump_ms: Optional[float] = None,
     loss_bump: Optional[float] = None,
     now: Optional[float] = None,
+    delay_ms_override: Optional[float] = None,
+    loss_override: Optional[float] = None,
 ) -> None:
     """
     Overwrite one link's live statistics, preserving whatever isn't specified.
@@ -131,11 +133,15 @@ def set_link_condition(
     scenario. Pass delay_bump_ms/loss_bump explicitly to bypass this and set
     an exact value instead (e.g. injecting an isolated, non-congestion event).
 
-    now: forwarded to NetworkState.update_link_statistics's jitter-tracker
-    clock (added 2026-08-19 alongside zeta/delay-jitter). Pass the same
-    synthetic now_s a caller drives the rest of a scenario with -- see
-    update_link_statistics's docstring for what silently breaks if this is
-    left at the real-time default in an offline, synthetic-clock experiment.
+    delay_ms_override/loss_override (added 2026-08-19): set delay/loss to
+    these *exact* values, bypassing both the formula and the bump-over-old-
+    value logic entirely. For injecting real Mininet-measured (delay, loss)
+    samples instead of congestion_model.py's formula -- the formula produces
+    delay_residual/loss_residual that are ~0 by construction (see
+    compliance_check.md's PCA section), which is fine for testing the
+    formula's own internal consistency but means any residual computed from
+    it carries no real variance to analyze. delay_bump_ms/loss_bump still
+    take priority if both are given by mistake (checked first, unchanged).
     """
     old = state.get_link_stats(link_id_str)
     resolved_utilization = utilization if utilization is not None else (float(old.utilization) if old else 0.2)
@@ -146,6 +152,13 @@ def set_link_condition(
         base_loss = float(old.packet_loss) if old and old.packet_loss else BASELINE_LOSS
         resolved_delay = base_delay + (delay_bump_ms or 0.0)
         resolved_loss = base_loss + (loss_bump or 0.0)
+    elif delay_ms_override is not None or loss_override is not None:
+        resolved_delay = delay_ms_override if delay_ms_override is not None else (
+            BASELINE_DELAY_MS + congestion_delay_bump_ms(resolved_utilization)
+        )
+        resolved_loss = loss_override if loss_override is not None else (
+            BASELINE_LOSS + congestion_loss_bump(resolved_utilization)
+        )
     else:
         resolved_delay = BASELINE_DELAY_MS + congestion_delay_bump_ms(resolved_utilization)
         resolved_loss = BASELINE_LOSS + congestion_loss_bump(resolved_utilization)

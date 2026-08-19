@@ -72,17 +72,27 @@ def run(output_dir: Path = Path("results/decision_churn_independence")) -> Dict[
     output_dir.mkdir(parents=True, exist_ok=True)
     state = build_network_state(output_dir, seed=RANDOM_SEED)
     builder = GraphBuilder(state)
-    pairs = builder.select_test_pairs(limit=NUM_PAIRS, min_candidate_paths=2)
+    # Over-fetch and de-dupe by first link -- see joint_independence_matrix.py's
+    # matching comment (2026-08-19): campaigns sharing a real link corrupt
+    # each other's recorded (utilization, delay) pairing, since they all
+    # write to the same NetworkState in one globally-shuffled event order.
+    candidate_pairs = builder.select_test_pairs(limit=NUM_PAIRS * 8, min_candidate_paths=2)
 
     rng = random.Random(RANDOM_SEED)
 
     campaigns = []
-    for src, dst in pairs:
+    used_links: set = set()
+    for src, dst in candidate_pairs:
+        if len(campaigns) >= NUM_PAIRS:
+            break
         drivers = make_drivers(state, src, dst, threshold=0.7, persistence_required_samples=1)
         driver = drivers["proposed"]
         if not driver.path or len(driver.path) < 2:
             continue
         first_link = link_id(driver.path[0], driver.path[1])
+        if first_link in used_links:
+            continue
+        used_links.add(first_link)
         schedule = [rng.choice(EVENT_TYPES) for _ in range(EVENTS_PER_PAIR)]
         campaigns.append({
             "src": src, "dst": dst, "driver": driver, "link": first_link,
