@@ -39,7 +39,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
-from .independence_stats import permutation_test, spearman_rho, variance_inflation_factors
+from .independence_stats import distance_correlation, permutation_test, spearman_rho, variance_inflation_factors
 from .simulation_common import (
     SAMPLE_INTERVAL_S,
     build_network_state,
@@ -51,8 +51,14 @@ from src.routing.congestion_model import predicted_delay_ms, predicted_loss
 from src.routing.graph_builder import GraphBuilder
 
 RANDOM_SEED = 42
-NUM_PAIRS = 6
-EVENTS_PER_PAIR = 15
+# 6->14 pairs, 15->60 events/pair (2026-08-19): the first pass left too few
+# non-cold-start jitter samples (28/75, mostly repeated values from the
+# rolling window not changing between closely-spaced reads) to say anything
+# reliable about zeta/eta independence. 14 is the real max of disjoint-
+# first-link campaigns this topology supports (verified live: only 14 of
+# 200 candidate pairs have non-overlapping first hops).
+NUM_PAIRS = 14
+EVENTS_PER_PAIR = 60
 # Randomized ranges, not fixed constants (2026-08-19): a fixed target
 # utilization makes nearest_real_sample() return the exact same real
 # (delay, loss) pair every time that event type fires, collapsing
@@ -64,7 +70,10 @@ BASELINE_UTILIZATION_RANGE = (0.10, 0.40)
 RECOVERY_WINDOW_BUFFER_S = 20.0
 EVENT_TYPES = ["congest", "relieve", "fail", "recover", "quiet"]
 
-VARIABLES = ["utilization", "delay_residual", "loss_residual", "churn_score"]
+VARIABLES = [
+    "utilization", "delay_residual", "loss_residual", "churn_score",
+    "delay_jitter_score", "loss_jitter_score",
+]
 
 REAL_SAMPLE_SOURCES = [
     Path("results/independence_check/independence_samples.csv"),
@@ -192,6 +201,8 @@ def run(output_dir: Path = Path("results/hybrid_congestion_churn_matrix")) -> Di
             "delay_residual": (delay - predicted_delay_ms(u)) if (u is not None and delay is not None) else None,
             "loss_residual": (loss - predicted_loss(u)) if (u is not None and loss is not None) else None,
             "churn_score": state.get_link_churn_score(link, now=campaign["now_s"]),
+            "delay_jitter_score": state.get_delay_jitter_score(link, now=campaign["now_s"]),
+            "loss_jitter_score": state.get_loss_jitter_score(link, now=campaign["now_s"]),
             "reliability_down": 0 if (stats is None or stats.status == "up") else 1,
         })
 
@@ -231,6 +242,24 @@ def run(output_dir: Path = Path("results/hybrid_congestion_churn_matrix")) -> Di
                 rho, p = permutation_test(data[vi], data[vj], statistic_fn=spearman_rho, n_permutations=4999, seed=RANDOM_SEED)
                 rho_matrix[vi][vj] = rho
                 row_cells.append(f"{rho:.3f}{'*' if p < 0.05 else ''}")
+        matrix_lines.append("| " + " | ".join(row_cells) + " |")
+
+    # --- dCor matrix: catches non-monotonic dependence Spearman would miss
+    # (relevant here since jitter is a variance-based signal, not a mean) ---
+    matrix_lines += ["", "## dCor matrix (catches non-monotonic dependence)", ""]
+    matrix_lines += [header, sep]
+    dcor_matrix: Dict[str, Dict[str, float]] = {}
+    for vi in VARIABLES:
+        row_cells = [vi]
+        dcor_matrix[vi] = {}
+        for vj in VARIABLES:
+            if vi == vj:
+                dcor_matrix[vi][vj] = 1.0
+                row_cells.append("1.000")
+            else:
+                dcor, dp = permutation_test(data[vi], data[vj], statistic_fn=distance_correlation, n_permutations=4999, seed=RANDOM_SEED)
+                dcor_matrix[vi][vj] = dcor
+                row_cells.append(f"{dcor:.3f}{'*' if dp < 0.05 else ''}")
         matrix_lines.append("| " + " | ".join(row_cells) + " |")
 
     vifs = variance_inflation_factors(data)
@@ -286,7 +315,7 @@ def run(output_dir: Path = Path("results/hybrid_congestion_churn_matrix")) -> Di
     (output_dir / "hybrid_report.md").write_text(report_text, encoding="utf-8")
     print(report_text)
     return {
-        "n": n, "rho_matrix": rho_matrix, "vifs": vifs,
+        "n": n, "rho_matrix": rho_matrix, "dcor_matrix": dcor_matrix, "vifs": vifs,
         "pca_vars": pca_vars, "pc1": pc1.tolist(),
         "pca_mean": mean.tolist(), "pca_std": std.tolist(),
         "variance_explained": float(variance_explained),

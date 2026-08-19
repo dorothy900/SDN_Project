@@ -1412,6 +1412,55 @@ non-utilization inputs.
 
 ---
 
+## Testing zeta/eta independence: a false-positive coupling found and refuted (2026-08-19)
+
+Neither `delay_jitter_score` nor `loss_jitter_score` had ever been recorded
+by any experiment before -- zero data existed on whether zeta and eta are
+independent of each other or of delta. Two passes, in order.
+
+**Pass 1: extended `hybrid_congestion_churn_matrix.py` to also record both
+jitter scores.** First run (n=28, the same 5-campaign scale used for the
+PCA work) found `delay_jitter_score` vs `loss_jitter_score` at Spearman
+rho=1.000* -- too clean to trust. Investigated directly: only 28 of 75 rows
+cleared the rolling-window cold-start threshold, and among those, only
+~6 distinct value pairs actually occurred (the 60s window often doesn't
+change between closely-spaced reads) -- an effective n far below 28.
+**Scaled up to the topology's real maximum (14 disjoint-first-link
+campaigns, verified live only 14 of 200 candidates qualify) x 60 events**
+(213 usable samples): the correlation held up as real at this scale
+(Spearman=0.800*, dCor=0.697*, p<0.05 under a 4999-permutation test) -- not
+a small-n artifact. Also newly significant at this scale: churn_score vs
+both jitter scores (Spearman -0.31*/-0.34*, dCor 0.30*/0.40*), not seen at
+n=28.
+
+**But the 0.80 correlation was still suspect for a structural reason
+independent of sample size:** `nearest_real_sample()` picks delay AND loss
+from the *same* real Mininet sample every time it's called, so within any
+rolling window, delay_jitter and loss_jitter are mechanically driven by the
+same "which real samples got picked" latent factor -- not two genuinely
+separate measurements. More data fixes small-n noise; it cannot fix a
+shared-generation-mechanism confound.
+
+**Pass 2: built `scripts/mininet_jitter_check.py` for real, independently-
+measured delay and loss** -- real ping-based delay, real tc-qdisc-based
+loss (not from a shared lookup), each fed through the actual production
+`NetworkState.update_link_statistics()` / `DelayJitterTracker`/
+`LossJitterTracker` code path in real time on the real s5-s14 link, no
+synthetic clock, no injection. **Result (55 real samples, 51 with both
+jitter scores past cold-start): Spearman=-0.2132, p=0.1322 (not
+significant); dCor=0.1944, p=0.4278 (not significant).**
+
+**Conclusion: the 0.80 correlation was the shared-lookup artifact, not a
+real property of delay/loss jitter.** Under genuine independent
+measurement, delay_jitter_score and loss_jitter_score show no evidence of
+dependence -- supporting the original design decision to keep eta separate
+from zeta rather than merge them. (The churn-jitter correlation found in
+pass 1 was not re-tested under independent measurement -- `mininet_jitter_check.py`
+has no DecisionEngine running, so churn stays 0 throughout; that finding's
+status is still open.)
+
+---
+
 ## Final Verdict
 
 **✅ Weeks 1–6 are implemented and passing (48/48 tests), Stage 6's comparative
