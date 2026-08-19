@@ -16,7 +16,7 @@ from datetime import datetime
 
 from src.monitor.network_state import NetworkState
 from src.monitor.models import LinkStatistics
-from src.routing.congestion_model import predicted_delay_ms
+from src.routing.congestion_model import predicted_delay_ms, predicted_loss
 
 
 def test_churn_score_is_visible_under_the_same_synthetic_clock_used_to_record_it():
@@ -113,3 +113,28 @@ def test_samples_during_the_post_switch_settle_window_are_excluded_from_jitter()
             now=t,
         )
     assert state.get_delay_jitter_score("0-2", now=117.0) > 0.0
+
+
+def test_loss_jitter_score_visible_under_the_same_synthetic_clock_used_to_record_it():
+    state = NetworkState()
+    now = 1000.0
+    for v in [-0.05, 0.0, 0.05]:
+        state.record_loss_residual("0-2", v, now=now)
+    assert state.get_loss_jitter_score("0-2", now=now) > 0.0
+
+
+def test_update_link_statistics_feeds_the_loss_jitter_tracker_automatically():
+    """Mirrors test_update_link_statistics_feeds_the_jitter_tracker_automatically
+    for loss_residual (packet_loss - predicted_loss(utilization))."""
+    state = NetworkState()
+    ts = datetime(2026, 8, 19, 12, 0, 0)
+    u = 0.75
+    predicted = predicted_loss(u)
+    for bump in [-0.05, 0.0, 0.05]:
+        state.update_link_statistics(
+            LinkStatistics(
+                timestamp=ts, link_id="0-2", utilization=u,
+                rx_mbps=10.0, tx_mbps=10.0, packet_loss=max(0.0, predicted + bump),
+            )
+        )
+    assert state.get_loss_jitter_score("0-2", now=ts.timestamp()) > 0.0

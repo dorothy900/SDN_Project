@@ -13,8 +13,9 @@ from .topology_state import TopologyState
 from .history_store import HistoryStore
 from .link_churn_tracker import LinkChurnTracker
 from .delay_jitter_tracker import DelayJitterTracker
+from .loss_jitter_tracker import LossJitterTracker
 from .models import LinkStatistics
-from ..routing.congestion_model import predicted_delay_ms
+from ..routing.congestion_model import predicted_delay_ms, predicted_loss
 
 
 class NetworkState:
@@ -38,6 +39,7 @@ class NetworkState:
         self.history = HistoryStore(window_size=history_window_size, output_dir=output_dir)
         self.link_churn = LinkChurnTracker()
         self.delay_jitter = DelayJitterTracker()
+        self.loss_jitter = LossJitterTracker()
         # How long after a link was last churned (added to/removed from an
         # installed path) to exclude its delay samples from jitter tracking
         # -- see update_link_statistics. Defaults to the same magnitude as
@@ -94,6 +96,14 @@ class NetworkState:
         """
         return self.delay_jitter.get_jitter_score(link_id, now=now)
 
+    def record_loss_residual(self, link_id: str, residual: float, now: Optional[float] = None) -> None:
+        """Record a fresh loss-residual observation for jitter tracking."""
+        self.loss_jitter.record_loss_residual(link_id, residual, now=now)
+
+    def get_loss_jitter_score(self, link_id: str, now: Optional[float] = None) -> float:
+        """Normalized [0.0, 1.0] instability score -- see LossJitterTracker."""
+        return self.loss_jitter.get_jitter_score(link_id, now=now)
+
     def update_link_statistics(self, link_stats: LinkStatistics, now: Optional[float] = None) -> None:
         """
         Update the state with new link statistics.
@@ -142,14 +152,21 @@ class NetworkState:
         # (control-plane churn) and zeta (data-plane jitter) partly
         # double-count the same underlying reroute event instead of
         # measuring two genuinely distinct things.
-        if link_stats.delay_ms is not None:
+        if link_stats.delay_ms is not None or link_stats.packet_loss is not None:
             jitter_now = now if now is not None else link_stats.timestamp.timestamp()
             settling = self.link_churn.has_changed_recently(
                 link_stats.link_id, within_seconds=self.jitter_settle_window_seconds, now=jitter_now
             )
             if not settling:
-                residual_ms = float(link_stats.delay_ms) - predicted_delay_ms(float(link_stats.utilization))
-                self.record_delay_residual(link_stats.link_id, residual_ms, now=jitter_now)
+                if link_stats.delay_ms is not None:
+                    residual_ms = float(link_stats.delay_ms) - predicted_delay_ms(float(link_stats.utilization))
+                    self.record_delay_residual(link_stats.link_id, residual_ms, now=jitter_now)
+                if link_stats.packet_loss is not None:
+                    # Same settle-window exclusion as delay jitter, and the
+                    # same rationale: a switch event's transient blip
+                    # shouldn't count as steady-state loss dispersion either.
+                    loss_residual = float(link_stats.packet_loss) - predicted_loss(float(link_stats.utilization))
+                    self.record_loss_residual(link_stats.link_id, loss_residual, now=jitter_now)
 
         self.last_update_time = link_stats.timestamp
     

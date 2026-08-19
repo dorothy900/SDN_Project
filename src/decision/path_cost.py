@@ -25,6 +25,7 @@ class PathCost:
             'delta': 0.05,
             'epsilon': 0.05,
             'zeta': 0.05,
+            'eta': 0.05,
         }
         self.graph_builder = GraphBuilder(network_state, weights)
 

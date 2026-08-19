@@ -34,6 +34,7 @@ class GraphBuilder:
             "delta": 0.05,
             "epsilon": 0.05,
             "zeta": 0.05,
+            "eta": 0.05,
         }
 
     def build_weighted_graph(self, now: Optional[float] = None) -> nx.Graph:
@@ -215,7 +216,27 @@ class GraphBuilder:
         can be jittery without ever having been rerouted around).
         zeta=0.05 is a starting default matching delta/epsilon's magnitude,
         not yet tuned by weight_search_comparison.py (still open, see
-        pending task notes) -- weights now sum to 1.05, not 1.0.
+        pending task notes) -- weights now sum to 1.10, not 1.0 (with eta).
+
+        eta*loss_jitter (added 2026-08-19, same day): same rationale as
+        zeta but for loss_residual -- a separate Breusch-Pagan test
+        confirmed it's heteroscedastic too (LM=14.965, p=0.0009 on a
+        LOESS-fitted residual, see compliance_check.md). Kept as its own
+        weight/tracker (NetworkState.get_loss_jitter_score(), a rolling-
+        window std of this link's recent loss residuals) rather than merged
+        into zeta -- delay and loss jitter are measured on different scales
+        via separate diagnostics, and this project found no real evidence
+        yet for how to normalize them into one combined signal.
+
+        Not a composite: a PCA merge of utilization/delay_residual/
+        loss_residual/churn into one term was tried and reverted the same
+        day (see compliance_check.md's "Composite congestion indicator"
+        section) -- PC1's loadings inverted the sign of both churn and
+        delay_residual's contribution (more churn / worse delay --> LOWER
+        cost), directly contradicting invariants this formula is built to
+        guarantee (test_churned_link_costs_more_than_an_identical_untouched_link,
+        test_link_with_anomalous_delay_beyond_prediction_costs_more). Kept
+        as 6 separate weighted terms instead.
         """
         if link_stats is None:
             return 1.0
@@ -235,6 +256,7 @@ class GraphBuilder:
         instability = self.network_state.get_link_churn_score(link_id, now=now)
         reliability_penalty = 0.0 if link_stats.status == "up" else 1.0
         jitter = self.network_state.get_delay_jitter_score(link_id, now=now)
+        loss_jitter = self.network_state.get_loss_jitter_score(link_id, now=now)
 
         raw_cost = (
             self.weights["alpha"] * utilization
@@ -243,6 +265,7 @@ class GraphBuilder:
             + self.weights["delta"] * instability
             + self.weights["epsilon"] * reliability_penalty
             + self.weights.get("zeta", 0.0) * jitter
+            + self.weights.get("eta", 0.0) * loss_jitter
             + 0.001
         )
         return max(raw_cost, self.MIN_EDGE_COST)

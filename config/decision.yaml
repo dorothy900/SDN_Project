@@ -36,6 +36,11 @@ path_cost_weights:
   gamma: 0.2
   delta: 0.05    # link instability/churn weight (recently-changed links cost more)
   epsilon: 0.05
-  zeta: 0.05     # delay-residual jitter weight (recently-volatile links cost more);
-                 # starting default matching delta/epsilon, not yet tuned -- see
-                 # compliance_check.md 2026-08-19 and pending task notes
+  zeta: 0.05     # delay-residual jitter weight (recently-volatile links cost more)
+  eta: 0.05      # loss-residual jitter weight (same idea, added 2026-08-19 after
+                 # Breusch-Pagan confirmed loss_residual is heteroscedastic too)
+                 # zeta/eta starting defaults matching delta/epsilon, not yet tuned
+                 # -- see compliance_check.md 2026-08-19 and pending task notes.
+                 # (A PCA-based composite merging alpha/beta/gamma/delta into one
+                 # term was tried and reverted the same day -- see
+                 # compliance_check.md's "Composite congestion indicator" section.)
