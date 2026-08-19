@@ -1622,6 +1622,140 @@ already existed for it.
 
 ---
 
+## u-churn re-characterized: a real variance effect, not a mean/threshold effect (2026-08-19)
+
+User-proposed reframing: `decision_churn_independence.py`'s `utilization`
+column turned out to only take **4 near-identical distinct values across
+75 samples** (0.2474/0.2642/0.3/0.85 -- effectively 2 experimental
+conditions: baseline ~0.3, congested 0.85). Treating this as a continuous
+variable for Spearman/dCor (as done throughout this session) is a
+conceptual mismatch -- it's really a two-group comparison. Reframed
+accordingly:
+
+**Point-biserial correlation + Mann-Whitney U (location/mean tests, real
+permutation p-values, n=43 congested / 32 baseline):**
+```
+Point-biserial r=0.0995, p=0.4177 (mean-difference permutation test)
+Mann-Whitney U=782.5, p=0.2917
+```
+Both **not significant** -- there is no real difference in *average*
+churn_score between the two utilization states.
+
+**But the two groups' churn_score spread is very different:**
+```
+congested (u=0.85): std=0.369
+baseline  (u~0.3):  std=0.223
+variance ratio = 2.71, permutation p=0.0001 -- highly significant
+```
+
+**This resolves an open question from earlier the same day:** neither OLS
+nor LOESS residualization touched the dCor=0.3398 finding at all (0.34 ->
+0.34-0.35 regardless of method) -- at the time attributed to churn's
+discrete, threshold-gated nature. The real reason is now clear: **there
+was never a mean-level relationship to residualize in the first place.**
+The entire dCor signal is a variance effect -- congested links show real,
+substantially more variable churn outcomes (plausibly because whether a
+specific link gets rerouted under congestion depends on which alternate
+paths exist, hysteresis timing, and which other links are also congested,
+while at baseline utilization there's rarely any reason to reroute at all,
+so churn stays consistently near-zero) -- and mean-targeting curve-fitting
+methods are structurally blind to a pure variance effect, the same
+limitation already established for delay_residual and loss_residual's own
+heteroscedasticity.
+
+**Not implemented as a new production signal.** Consistent with this
+session's established threshold: real and well-characterized, but pricing
+"churn's own dispersion under congestion" would be a variance-of-an-
+already-aggregated-rolling-statistic (churn_score is itself a rolling-
+window count), a level of nesting this project hasn't found justified
+elsewhere. Also only confirmed at 2 experimenter-chosen utilization levels
+(0.3 vs 0.85) -- generalizing to intermediate real utilization values is
+untested. Recorded as the correct, final characterization of u-churn's
+dependency, superseding the earlier "weak non-monotonic residual
+dependence" framing.
+
+---
+
+## delay_residual-gamma double-counting, quantified (2026-08-19)
+
+Sharper version of "why we accept this" for the beta-gamma overlap found
+earlier: `R² = 0.4086` -- **41% of loss_residual's variance is linearly
+predictable from delay_residual alone.** Using the real config weights
+(beta=0.3, gamma=0.2) and the fitted slope (loss_residual ≈ 0.0496 +
+0.000874*delay_residual): for a real `+X`ms delay anomaly, beta prices
+`0.0003*X` directly, and gamma's term *also* moves by `0.000175*X` purely
+because of the correlation -- **a 0.58x ratio: for every unit beta prices
+from a real anomaly, gamma adds another ~0.58 units driven by the same
+underlying event, not a genuinely independent loss signal.**
+
+This is a real, non-trivial amount of double-counting -- smaller than the
+~1.7x overstatement that motivated the original alpha/beta/gamma residual
+redesign, but not negligible. Stated plainly rather than left as a vague
+"acceptable overlap": beta and gamma jointly overweight a real anomaly's
+cost by roughly this much relative to two genuinely independent signals,
+and the reason this isn't fixed is the cost/benefit finding from the
+previous section (16% dCor reduction, heteroscedastic remainder, added
+formula complexity) -- not that the overlap is small enough to ignore.
+
+---
+
+## Methodological confidence audit: which findings were only ever offline-framework-supported (2026-08-19)
+
+User-requested: given the offline injection-based hybrid framework
+produced 2 confirmed-fake correlations this session (delay_jitter-
+loss_jitter, churn-jitter) and 1 confirmed-real one (delay_residual-
+loss_residual, verified on independently-measured real data), every OTHER
+finding that has *only* ever come from that framework -- never
+independently verified -- needs an explicit confidence tier rather than
+being cited as settled.
+
+**Tier 1 -- real, independently measured, high confidence:**
+u-delay, u-loss (raw), u-delay_residual, u-loss_residual,
+achieved_utilization-loss (non-monotonic), delay_residual-loss_residual,
+delay_jitter-loss_jitter (independent), u-delay_jitter (independent),
+u-loss_jitter (independent), churn-delay_jitter (independent),
+churn-loss_jitter (independent), u-churn's TRUE characterization (variance
+effect, this section).
+
+**Tier 2 -- real DecisionEngine behavior, offline-only, but not the
+shared-lookup-artifact mechanism (u and failure status are experimenter-
+set conditions triggering a real DecisionEngine, not values pulled from a
+shared real-sample lookup the way delay/loss injection was) -- moderate
+confidence, never run live:**
+- **churn-reliability independence**: consistent across every offline
+  rerun (pre- and post- the disjoint-link bugfix), but never tested with a
+  real DecisionEngine reacting to real Mininet failures. Downgrade from
+  "confirmed" to "consistently observed offline, not live-verified."
+- **u-churn's variance effect** (this section): real, but only tested at 2
+  experimenter-chosen utilization levels (0.3, 0.85) — not a natural
+  continuous real distribution. Downgrade to "confirmed at these 2 levels,
+  generalization untested."
+
+**Tier 3 -- weakest support, explicitly downgrade to "hypothesis, not a
+finding":**
+- **delay vs churn, loss vs churn** (`joint_independence_matrix.py`'s
+  original dCor≈0.47-0.49 and 0.23-0.24): delay/loss in that experiment
+  are generated *from* utilization by `congestion_model`'s formula, not
+  measured — doubly synthetic (generated delay/loss, offline churn). Never
+  re-verified after the disjoint-first-link bugfix (only u-churn and
+  churn-reliability specifically were re-run post-fix) — could still
+  reflect the same contamination. **Should not be cited without a rerun.**
+- **The joint VIF numbers** (`utilization`/`delay_ms`/`loss`/`churn_score`/
+  `reliability_down` from `joint_independence_matrix.py`): computed on a
+  mix of synthetic (by-construction) delay/loss and real churn — the
+  churn_score/reliability_down VIF values (~2.0/~1.2, "carry independent
+  information") are the most defensible part (churn is real), but the
+  overall joint statistic mixes confidence levels and shouldn't be quoted
+  as a single clean number without that caveat.
+
+**How to apply going forward:** Tier 3 items need a real rerun (at minimum,
+the disjoint-link fix's rerun that was never done for these two pairs
+specifically) before being cited as conclusions in the dissertation write-
+up; Tier 2 items are reasonably trustworthy but should be captioned "not
+live-verified"; Tier 1 items can be cited directly.
+
+---
+
 ## Final Verdict
 
 **✅ Weeks 1–6 are implemented and passing (48/48 tests), Stage 6's comparative
