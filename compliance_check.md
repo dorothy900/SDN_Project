@@ -1055,6 +1055,76 @@ method than a plain grid search.
 
 ---
 
+## Root-causing the leftover delay-residual dCor signal: hump diagnosis (2026-08-19)
+
+The Theil-Sen refit above reduced but didn't eliminate `dCor(u,
+delay_residual)` (0.378→0.347, still p=0.0001). Rather than keep tuning the
+same parametric curve, diagnosed *why* a real signal persists, following a
+structured decision path: rule out experiment-design artifacts first (time
+drift, link-switch cold start, sample-to-sample hysteresis/queue carryover);
+if those are clean, treat it as a genuine non-monotonic relationship and
+switch to a non-parametric residual extraction method instead of continuing
+to force the queueing-theory shape. Diagnostic figure (4 panels: residual by
+link, residual vs execution time colored by link, residual by link-switch
+status, local-median smoother showing the hump shape) published at
+https://claude.ai/code/artifact/3321f210-88e7-4c3f-b345-ae29664b65f4.
+
+**All three artifact hypotheses ruled out, using the real execution-order
+log from the coverage-extension run (196 samples, reconstructed sample
+index from `mininet_independence_check.py`'s own stdout):**
+- Time drift (execution index vs residual): Spearman p=0.9671, dCor p=0.8945.
+- Link-switch cold start (just-switched-to-this-link flag vs residual):
+  Spearman p=0.9975, dCor p=0.5739.
+- Same-link consecutive-sample carryover (residual[i-1] vs residual[i] for
+  same-link back-to-back real executions, n=53 pairs): Spearman p=0.3269.
+
+None significant — the hump is not an artifact of experiment timing,
+per-link setup overhead, or queue/buffer carryover between samples.
+
+**Confirmed the hump is a real, within-link phenomenon, not a cross-link
+mixing artifact.** Excluding s5-s14 entirely (n=148, the other 3 links
+only): dCor(u, residual) = 0.311, p=0.0002 — barely lower than the full
+dataset's 0.347. By utilization tercile, each of the 3 remaining links shows
+the same rise-then-fall shape individually: s1-s2 -31.5→+21.3→-45.6ms,
+s13-s35 -31.1→+7.2→-13.3ms, s5-s6 -9.8→+33.2→+30.6ms (this link's u only
+reaches 0.375, consistent with catching the rise but not yet the fall).
+Spearman reads this as independence (only detects monotonic trends); dCor
+correctly flags it as real dependence.
+
+**Switched to LOESS (local weighted regression, tricube kernel, degree-2,
+frac=0.35 — implemented in pure numpy, no scipy) to extract the residual
+instead of the parametric `scale_ms * u/(1-u)` curve, per the decision
+above.** Result: `dCor(u, LOESS_residual) = 0.281, p=0.0002` (down from
+0.347 parametric; Pearson/Spearman both now clean, not significant) — LOESS
+captures the hump shape better, as expected from a locally-adaptive method,
+but a real dCor signal still remains.
+
+**That remaining signal is heteroscedasticity (variance depends on u), not
+a mean-shape defect** — checked residual spread by utilization quintile:
+std=93.0 (lowest u) → 73.4 → 62.5 (lowest, mid-range) → 111.4 → **167.4
+(highest u, 2.7x the mid-range minimum)**. Real network delay becoming more
+variable/bursty as utilization approaches saturation is a well-known,
+physically expected effect. A residual formula that prices a single scalar
+"how far is delay from its expected value" is structurally about the
+*conditional mean* — it cannot, by construction, remove a dependence that
+lives in the *conditional variance* without a fundamentally different
+design (e.g., separately modeling and pricing dispersion). This is very
+likely close to the practical floor for this specific approach, not a sign
+the investigation was incomplete.
+
+**Decision: did not switch production `congestion_model.py` to LOESS.**
+Discussed the tradeoff explicitly: LOESS is not a closed-form curve — it
+requires retaining the full training dataset and doing a local weighted
+regression at prediction time, and has no principled extrapolation behavior
+in sparse regions (u>0.6, where real coverage is thin and single-link, is
+exactly where this would matter most). Kept the current Theil-Sen-fit
+parametric curve (`scale_ms=120.174`, `BASELINE_DELAY_MS=34.062`,
+`MAX_UTILIZATION_FOR_EXTRAPOLATION=0.75`) as the production choice; this
+LOESS analysis stands as a diagnostic result explaining *why* the residual
+doesn't fully vanish, not as an implemented alternative.
+
+---
+
 ## Final Verdict
 
 **✅ Weeks 1–6 are implemented and passing (48/48 tests), Stage 6's comparative
