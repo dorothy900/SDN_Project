@@ -15,8 +15,24 @@ hysteresis:
   release_threshold: 0.65
 
 minimum_improvement:
+  # Churn-adaptive threshold (added 2026-08-20): the *_cost_reduction values
+  # below are now the ceiling, used only when the affected link(s) have a
+  # saturated recent churn_score (1.0 -- already flapping, stay cautious,
+  # identical to this project's original fixed-threshold behavior). The
+  # *_cost_reduction_low_churn values are the floor, used when churn_score
+  # is 0 (no recent instability -- a real, if modest, improvement shouldn't
+  # be blocked just because the fixed 0.15 threshold happens to be a bit
+  # too strict for this specific case). Linearly interpolated by churn_score
+  # in between. See DecisionEngine._execute_reroute() and
+  # compliance_check.md's "Churn-adaptive minimum-improvement threshold"
+  # section for the real congestion.py scenario that motivated this (a
+  # genuine ~10% cost improvement was blocked by the flat 0.15 threshold
+  # combined with the offered-load self-influence correction, on a link
+  # with zero churn history).
   absolute_cost_reduction: 0.1
   relative_cost_reduction: 0.15
+  absolute_cost_reduction_low_churn: 0.03
+  relative_cost_reduction_low_churn: 0.05
 
 change_budget:
   max_updates_per_minute: 10

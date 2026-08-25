@@ -116,6 +116,38 @@ class PersistenceChecker:
         if key in self.active_windows:
             del self.active_windows[key]
 
+    def leak_window(self, link_id: str, metric: str) -> None:
+        """
+        Leaky-bucket persistence (2026-08-20): a single recovered sample
+        forgives exactly one accumulated violation, instead of wiping the
+        whole window (clear_window -- too strict, an isolated single-sample
+        recovery in the middle of a chronic problem erases all standing
+        evidence) or leaving it to grow forever (a real bug this project
+        had until 2026-08-20 -- clear_window's own caller in DecisionEngine
+        was unreachable in practice, see compliance_check.md's "Persistence
+        window never actually reset on recovery" section).
+
+        1:1 leak rate, no new free parameter: one clean sample cancels
+        exactly one violating sample. A genuinely isolated spike is still
+        forgotten within 1-2 clean samples (this project's existing
+        noise-rejection goal, unchanged). A link that violates *more often
+        than it recovers* nets upward over time and eventually still trips
+        persistence -- catching chronic-but-intermittent instability that
+        strict consecutive-only semantics structurally cannot see (found
+        via the oscillating-hotspot flapping check). A symmetric on/off
+        pattern (equal violate/recover counts) nets to zero and correctly
+        never trips, by the same arithmetic -- this is intentional, not a
+        gap: a 50/50 link isn't chronically *worse* than tolerable, it's
+        borderline by construction.
+        """
+        key = (link_id, metric)
+        window = self.active_windows.get(key)
+        if window is None or not window.violations:
+            return
+        window.violations.popleft()
+        if not window.violations:
+            del self.active_windows[key]
+
     def record_reroute(self, link_id: str, metric: str):
         """Record that a reroute occurred for cooldown tracking."""
         key = (link_id, metric)

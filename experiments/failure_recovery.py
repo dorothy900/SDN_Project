@@ -83,6 +83,21 @@ class FailureRecoveryScenario:
         drivers = make_drivers(state, src, dst, threshold=0.7, persistence_required_samples=3)
         static, dynamic, proposed = drivers["static"], drivers["dynamic"], drivers["proposed"]
         failed_link = link_id(static.path[0], static.path[1])
+        # flow-video-1 is the real flow mapped onto PRIMARY_PAIR (see
+        # increasing_load.py's comment). offered_load_mbps IS set here
+        # (unlike congestion.py/stale_stats.py/increasing_load.py, where it
+        # stays disabled) -- this is the one scenario that actually
+        # exercises evaluate_recovery_switchback, and a real Mininet
+        # experiment (scripts/mininet_offered_load_recovery_check.py,
+        # 2026-08-20) demonstrated the correction correctly blocks a
+        # switchback into a path whose background genuinely worsened during
+        # the outage (4-16 Mbps injected background flipped the uncorrected
+        # decision to accept, while the corrected one correctly stayed
+        # rejected) -- see compliance_check.md's "Re-enabling the
+        # offered-load correction for recovery switchback" section.
+        primary_flow = next((f for f in flows if f.flow_id == "flow-video-1"), None)
+        if primary_flow is not None:
+            proposed.offered_load_mbps = primary_flow.offered_load_mbps
 
         for sample in range(1, total_samples + 1):
             now_s = sample * SAMPLE_INTERVAL_S

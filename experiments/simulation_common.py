@@ -33,38 +33,46 @@ from src.routing.flow_installer import FlowInstaller
 from src.routing.graph_builder import GraphBuilder
 from src.routing.static_shortest_path import StaticShortestPath
 
+from .sndlib_demand import FALLBACK_HIGH, FALLBACK_LOW, resolve_edge_demand_baseline, resolve_edge_diversity_baseline
+
 SAMPLE_INTERVAL_S = 2.0  # matches config/topology.yaml monitoring.interval_seconds
-LINK_CAPACITY_MBPS = 100.0  # flat fallback -- see resolve_offered_load_utilization()
-                             # for the real per-link alternative added 2026-08-12;
-                             # this constant is still used as-is by compute_flow_metrics()
-                             # below, a separate, not-yet-revisited spot with the same
-                             # stale-100-for-every-link assumption src/monitor/
-                             # link_capacity.py fixed for topology.py.
+LINK_CAPACITY_MBPS = 100.0  # flat fallback, used only when there's nothing real to
+                             # look up: an edge with no published GEANT LinkLabel
+                             # (resolve_link_capacity_mbps's own fallback), or a
+                             # None/degenerate path (resolve_path_capacity_mbps).
+                             # compute_flow_metrics() used to hardcode this for
+                             # every path regardless of real capacity -- fixed
+                             # 2026-08-19 to use resolve_path_capacity_mbps()
+                             # (the real per-link bottleneck) instead; this constant
+                             # remains only as that function's own last-resort default.
 BASE_TIMESTAMP = datetime(2026, 8, 24, 12, 0, 0)
 
-_GEANT_GRAPHML_PATH = Path(__file__).resolve().parents[1] / "data" / "Geant2012.graphml"
 
-
-def resolve_offered_load_utilization(link_id_str: str, offered_load_mbps: float) -> float:
+def resolve_link_capacity_mbps(link_id_str: str) -> float:
     """
-    Convert a flow's real Mbit demand into a utilization fraction for a
-    specific link, using the same real per-link GEANT bandwidth data
-    topology.py resolves for the live Mininet deployment
-    (src/monitor/link_capacity.py) -- so the offline simulator's notion of
-    "how much utilization would this flow add" is grounded in the same real
-    capacity numbers the actual testbed uses, not an arbitrary assumed one.
-    Added 2026-08-12 alongside PathCost's offered_load_utilization support.
+    Real per-link capacity (Mbps) for one GEANT edge. Thin wrapper over
+    src.monitor.link_capacity's own resolver (moved there 2026-08-20 so
+    PathCost's per-edge offered-load correction can use the same real
+    capacity data production-side, not just this offline harness) --
+    kept here only to pin this module's own LINK_CAPACITY_MBPS default.
     """
-    import networkx as nx
+    from src.monitor.link_capacity import resolve_link_capacity_mbps as _resolve
 
-    from src.monitor.link_capacity import resolve_link_bw_mbps
+    return _resolve(link_id_str, default_mbps=LINK_CAPACITY_MBPS)
 
-    graph = nx.Graph(nx.read_graphml(_GEANT_GRAPHML_PATH))
-    graph.remove_edges_from(nx.selfloop_edges(graph))
-    u, v = link_id_str.split("-", 1)
-    edge_data = graph.get_edge_data(u, v) or {}
-    capacity_mbps = resolve_link_bw_mbps(edge_data.get("LinkLabel"), default_mbps=LINK_CAPACITY_MBPS)
-    return min(offered_load_mbps / capacity_mbps, 1.0)
+
+def resolve_path_capacity_mbps(path: Optional[Sequence[str]]) -> float:
+    """
+    Bottleneck real capacity (Mbps) along a path -- the minimum of each
+    hop's own real per-link capacity, mirroring how a real network's
+    achievable throughput is capped by its narrowest link, not an
+    arbitrary flat assumption. None/degenerate path falls back to
+    LINK_CAPACITY_MBPS (nothing real to look up).
+    """
+    if not path or len(path) < 2:
+        return LINK_CAPACITY_MBPS
+    return min(resolve_link_capacity_mbps(link_id(u, v)) for u, v in zip(path, path[1:]))
+
 
 # flow-video-1 (h3->h8) maps directly onto GEANT nodes ("2","7"): FlowInstaller's
 # hN <-> node(N-1) convention. This pair has 3 distinct, non-trivial candidate
@@ -85,13 +93,45 @@ def path_hops(path: Optional[Sequence[str]]) -> int:
     return max(len(path) - 1, 0) if path else 0
 
 
-def build_network_state(output_dir: Path, seed: int = 0, base_utilization: float = 0.22) -> NetworkState:
-    """Seed a deterministic (but run-to-run jittered) GEANT network state."""
+def build_network_state(output_dir: Path, seed: int = 0) -> NetworkState:
+    """
+    Seed a deterministic (but run-to-run jittered) GEANT network state.
+
+    Background link baselines: a three-tier fallback, real data first.
+      1. resolve_edge_demand_baseline() -- real SNDlib GEANT traffic-demand
+         data, mapped by country identity (see sndlib_demand.py's module
+         docstring, added 2026-08-20).
+      2. resolve_edge_diversity_baseline() -- SNDlib's synthetic "nobel-eu"
+         reference network, consulted only when tier 1 doesn't cover an
+         edge. Explicitly NOT a realism claim (see sndlib_demand.py's tier-2
+         section for why nobel-eu isn't real data) -- used only to give a
+         few more edges real *structural variation* instead of the flat
+         formula, kept strictly separate from tier 1 so a real-data value
+         is never overridden or blended with a synthetic one.
+      3. Fallback: uniform random draw across [FALLBACK_LOW, FALLBACK_HIGH]
+         (the same range tiers 1/2 use), for whatever neither tier above
+         covers -- fixed 2026-08-20, replacing the old narrow
+         `base_utilization + 0.01*(index % 6)` formula (~0.05-wide band).
+         That narrow band created a real, systematic (not random) bias:
+         real demand-calibrated edges between busy hub countries
+         legitimately read higher than the old band's ceiling, so any
+         candidate path touching even one uncovered node looked
+         artificially cheap by comparison, deterministically (verified
+         across 20 seeds, same biased path chosen every time). See
+         sndlib_demand.py's FALLBACK_LOW/HIGH docstring and
+         compliance_check.md's "Fallback baseline range widened to remove
+         a systematic bias" section.
+    """
     rng = random.Random(seed)
     state = NetworkState(output_dir=output_dir)
     for index, edge in enumerate(sorted(state.topology.get_active_links(), key=canonical_edge)):
         lid = link_id(*edge)
-        utilization = round(base_utilization + 0.01 * (index % 6) + rng.uniform(0.0, 0.01), 4)
+        edge_base = resolve_edge_demand_baseline(*edge)
+        if edge_base is None:
+            edge_base = resolve_edge_diversity_baseline(*edge)
+        if edge_base is None:
+            edge_base = rng.uniform(FALLBACK_LOW, FALLBACK_HIGH)
+        utilization = round(edge_base + rng.uniform(0.0, 0.01), 4)
         state.update_link_statistics(
             LinkStatistics(
                 timestamp=BASE_TIMESTAMP + timedelta(seconds=index),
@@ -227,7 +267,8 @@ def compute_flow_metrics(state: NetworkState, path: Optional[Sequence[str]], off
         loss_rate = float(metrics["loss_rate"]) + 0.05 * congestion
         throughput_factor = max(0.15, 1.0 - float(metrics["max_utilization"]))
 
-    throughput_mbps = min(offered_load_mbps, LINK_CAPACITY_MBPS) * throughput_factor
+    path_capacity_mbps = resolve_path_capacity_mbps(path)
+    throughput_mbps = min(offered_load_mbps, path_capacity_mbps) * throughput_factor
     return {
         "delay_ms": round(delay_ms, 6),
         "throughput_mbps": round(throughput_mbps, 6),
@@ -320,19 +361,30 @@ class ProposedDriver:
         persistence_required_samples: Optional[int] = None,
         initial_path: Optional[List[str]] = None,
         utilization_threshold: Optional[float] = None,
-        offered_load_utilization: Optional[float] = None,
+        offered_load_mbps: Optional[float] = None,
+        service_type: Optional[str] = None,
     ):
         self.state = state
         self.src, self.dst = src, dst
-        # This flow's own bandwidth demand, as a utilization fraction --
-        # fixed 2026-08-12 ("self-influence / offered-load accounting"):
-        # applied to candidate paths only when comparing reroute options,
-        # since the current path already reflects this flow's real
-        # contribution but a candidate doesn't yet. See PathCost.
-        # calculate_path_cost's docstring. None (default) preserves prior
-        # behavior exactly -- existing callers are unaffected unless they
-        # opt in.
-        self.offered_load_utilization = offered_load_utilization
+        # This flow's traffic class (added 2026-08-20) -- forwarded to
+        # DecisionEngine.evaluate_pair so config/policies.yaml's per-class
+        # policy (severity-scaled skip-persistence for high-priority
+        # classes) applies here too, not just in priority_policy.py's own
+        # evaluate_service_congestion path. None (default) preserves prior
+        # behavior exactly.
+        self.service_type = service_type
+        # This flow's own raw bandwidth demand in Mbps -- fixed 2026-08-12
+        # ("self-influence / offered-load accounting"), reworked 2026-08-20
+        # to carry the flow's raw Mbps instead of a single precomputed
+        # utilization fraction, so PathCost can convert it per-edge using
+        # each edge's own real capacity (a uniform fraction based on one
+        # link's capacity systematically mis-priced other edges -- see
+        # PathCost.calculate_path_cost's docstring). Applied to candidate
+        # paths only when comparing reroute options, and only to edges the
+        # candidate doesn't already share with the current path, since the
+        # current path already reflects this flow's real contribution on
+        # those. None (default) preserves prior behavior exactly.
+        self.offered_load_mbps = offered_load_mbps
         self.engine = DecisionEngine(state, config_path=config_path)
         if persistence_required_samples is not None:
             self.engine.persistence_checker.required_samples = persistence_required_samples
@@ -371,7 +423,7 @@ class ProposedDriver:
         if self.watching_recovery:
             action = self.engine.evaluate_recovery_switchback(
                 self.src, self.dst, self.path, now=now_s,
-                offered_load_utilization=self.offered_load_utilization,
+                offered_load_mbps=self.offered_load_mbps,
             )
             if action:
                 self.path = action["new_path"]
@@ -386,7 +438,8 @@ class ProposedDriver:
                 if candidate and candidate != self.path:
                     action = self.engine.evaluate_pair(
                         self.src, self.dst, self.path, candidate, violation, now=now_s,
-                        offered_load_utilization=self.offered_load_utilization,
+                        offered_load_mbps=self.offered_load_mbps,
+                        service_type=self.service_type,
                     )
                     if action:
                         flow_updates += len(self.engine.flow_installer.build_flow_rules(candidate))
@@ -394,8 +447,15 @@ class ProposedDriver:
                         reroute = True
             else:
                 # Utilization has cleared the threshold entirely; let hysteresis
-                # state reset so a future crossing is treated as a fresh entry.
+                # state reset so a future crossing is treated as a fresh entry,
+                # and leak the persistence window by one unit too (2026-08-20 --
+                # see DecisionEngine.leak_persistence's docstring: a full clear
+                # here would erase standing evidence of a chronic-but-brief
+                # problem the instant it dips below threshold even once; a
+                # 1:1 leak still forgives an isolated spike within 1-2 clean
+                # samples but lets repeated short violations net upward).
                 self.engine.stability.update_congestion_state(hotspot_link, hotspot_utilization)
+                self.engine.leak_persistence(hotspot_link)
 
         decision_time_ms = (time.perf_counter() - t0) * 1000.0
         return {
@@ -412,7 +472,7 @@ class ProposedDriver:
         candidate = self.engine.path_cost.find_best_path(self.src, self.dst, now=now_s)
         action = self.engine.evaluate_failure(
             self.src, self.dst, self.path, failed_link_id, candidate, now=now_s,
-            offered_load_utilization=self.offered_load_utilization,
+            offered_load_mbps=self.offered_load_mbps,
         )
         if action:
             flow_updates = len(self.engine.flow_installer.build_flow_rules(candidate))
@@ -437,7 +497,8 @@ def make_drivers(
     dst: str = PRIMARY_PAIR[1],
     threshold: float = 0.7,
     persistence_required_samples: Optional[int] = None,
-    offered_load_utilization: Optional[float] = None,
+    offered_load_mbps: Optional[float] = None,
+    service_type: Optional[str] = None,
 ) -> Dict[str, object]:
     """
     Construct one driver per algorithm sharing the same seeded NetworkState,
@@ -448,7 +509,7 @@ def make_drivers(
     which is the property Stage 6 actually exercises (its own hop-count
     tie-break behavior is already validated independently in Stage 3).
 
-    offered_load_utilization: opt-in fix for the "self-influence /
+    offered_load_mbps: opt-in fix for the "self-influence /
     offered-load accounting" limitation (documented 2026-08-11, fixed
     2026-08-12) -- forwarded to ProposedDriver only (static/dynamic don't go
     through PathCost.compare_paths' asymmetric old/new costing). None
@@ -466,6 +527,7 @@ def make_drivers(
             persistence_required_samples=persistence_required_samples,
             initial_path=initial_path,
             utilization_threshold=threshold,
-            offered_load_utilization=offered_load_utilization,
+            offered_load_mbps=offered_load_mbps,
+            service_type=service_type,
         ),
     }

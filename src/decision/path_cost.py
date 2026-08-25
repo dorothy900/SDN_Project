@@ -5,10 +5,11 @@ Calculate path cost using our weighted formula
 """
 
 from dataclasses import replace
-from typing import Dict, List, Optional
+from typing import Dict, FrozenSet, List, Optional
 
 import networkx as nx
 
+from ..monitor.link_capacity import resolve_link_capacity_mbps
 from ..monitor.network_state import NetworkState
 from ..routing.graph_builder import GraphBuilder
 
@@ -33,7 +34,8 @@ class PathCost:
         self,
         path: List[str],
         now: Optional[float] = None,
-        offered_load_utilization: Optional[float] = None,
+        offered_load_mbps: Optional[float] = None,
+        exclude_edges: Optional[FrozenSet[str]] = None,
     ) -> float:
         """
         Calculate total cost of a path.
@@ -45,26 +47,33 @@ class PathCost:
         on a synthetic one, and a synthetic-clock-recorded churn event will
         never be seen (see NetworkState.get_link_churn_score's docstring).
 
-        offered_load_utilization (fixed 2026-08-12, "self-influence /
-        offered-load accounting", logged as a known limitation since
-        2026-08-11): if given, added to every edge's *measured* utilization
-        along this path before pricing it -- models what this path would
-        cost if a flow demanding this much utilization were routed across
-        it. Pass this for a *candidate* path that doesn't carry the flow
-        yet; leave it None (default) for a path that already reflects the
-        flow's real current state (the path it's already on) -- otherwise
-        the current path's cost already includes this flow's contribution
-        while a candidate's doesn't, making candidates look artificially
-        cheaper than they'd actually be once the flow moved there. See
-        compare_paths()/is_improvement(), which apply this asymmetrically
-        (new_path only) for exactly this reason -- this method itself is
-        symmetric and just does what it's told for whichever path it's
-        given.
+        offered_load_mbps (fixed 2026-08-12 as a single precomputed
+        utilization fraction, "self-influence / offered-load accounting";
+        reworked 2026-08-20 to take the flow's raw Mbps demand instead):
+        if given, converted to a utilization bump *per edge* using that
+        edge's own real capacity (resolve_link_capacity_mbps) and added to
+        the edge's measured utilization before pricing -- models what this
+        path would cost if a flow demanding this much bandwidth were routed
+        across it. A single capacity-agnostic fraction previously
+        mispriced any edge whose real capacity differed from whichever
+        link the fraction happened to be computed against (found
+        2026-08-20, multi-pair robustness check). Pass this for a
+        *candidate* path that doesn't carry the flow yet; leave it None
+        (default) for a path that already reflects the flow's real current
+        state. exclude_edges: edges to leave unbumped even when
+        offered_load_mbps is given -- for edges the candidate already
+        shares with the *current* path, which already carries this flow's
+        real contribution there today; bumping them again would double-
+        count it (found alongside the capacity issue, same root check).
+        See compare_paths()/is_improvement(), which apply both
+        asymmetrically (new_path only) for exactly this reason -- this
+        method itself is symmetric and just does what it's told for
+        whichever path it's given.
         """
         if not path or len(path) < 2:
             return float('inf')
 
-        if offered_load_utilization is None:
+        if offered_load_mbps is None:
             graph = self.graph_builder.build_weighted_graph(now=now)
             total_cost = 0.0
             for i in range(len(path) - 1):
@@ -74,11 +83,12 @@ class PathCost:
                 total_cost += graph[u][v]['weight']
             return total_cost
 
-        # offered_load_utilization given: every edge on this path needs its
-        # utilization bumped before pricing, so the precomputed whole-graph
-        # weights (built from unmodified utilization) can't be reused --
-        # recompute each edge's cost directly against a loaded copy of its
-        # real stats instead.
+        # offered_load_mbps given: every non-excluded edge on this path
+        # needs its utilization bumped before pricing, so the precomputed
+        # whole-graph weights (built from unmodified utilization) can't be
+        # reused -- recompute each edge's cost directly against a loaded
+        # copy of its real stats instead.
+        exclude_edges = exclude_edges or frozenset()
         active_graph = self.network_state.get_active_graph()
         total_cost = 0.0
         for i in range(len(path) - 1):
@@ -90,9 +100,13 @@ class PathCost:
             if stats is None:
                 total_cost += 1.0  # matches GraphBuilder._calculate_edge_cost's own no-data default
                 continue
-            loaded_stats = replace(
-                stats, utilization=min(float(stats.utilization) + offered_load_utilization, 1.0)
-            )
+            if link_id in exclude_edges:
+                loaded_stats = stats
+            else:
+                bump = offered_load_mbps / resolve_link_capacity_mbps(link_id)
+                loaded_stats = replace(
+                    stats, utilization=min(float(stats.utilization) + bump, 1.0)
+                )
             total_cost += self.graph_builder._calculate_edge_cost(loaded_stats, link_id, now=now)
         return total_cost
 
@@ -142,16 +156,22 @@ class PathCost:
                       min_abs_reduction: float = 0.1,
                       min_rel_reduction: float = 0.15,
                       now: Optional[float] = None,
-                      offered_load_utilization: Optional[float] = None) -> bool:
+                      offered_load_mbps: Optional[float] = None) -> bool:
         """
         Check if new path is a significant improvement.
 
-        offered_load_utilization is applied to new_path only, not old_path
-        -- see calculate_path_cost's docstring for why (old_path already
-        reflects this flow's real current state; new_path doesn't yet).
+        offered_load_mbps is applied to new_path only, not old_path -- see
+        calculate_path_cost's docstring for why (old_path already reflects
+        this flow's real current state; new_path doesn't yet) -- and is
+        never applied to edges new_path shares with old_path (same
+        docstring, exclude_edges), since old_path's measured stats on
+        those already include this flow's real contribution.
         """
         old_cost = self.calculate_path_cost(old_path, now=now)
-        new_cost = self.calculate_path_cost(new_path, now=now, offered_load_utilization=offered_load_utilization)
+        shared_edges = self._path_edges(old_path) & self._path_edges(new_path)
+        new_cost = self.calculate_path_cost(
+            new_path, now=now, offered_load_mbps=offered_load_mbps, exclude_edges=shared_edges
+        )
 
         if new_cost >= old_cost:
             return False
@@ -169,16 +189,19 @@ class PathCost:
         min_abs_reduction: float = 0.1,
         min_rel_reduction: float = 0.15,
         now: Optional[float] = None,
-        offered_load_utilization: Optional[float] = None,
+        offered_load_mbps: Optional[float] = None,
     ) -> Dict[str, float]:
         """
         Return comparable cost and gain metrics for two candidate paths.
 
-        offered_load_utilization is applied to new_path only -- see
-        calculate_path_cost's docstring.
+        offered_load_mbps is applied to new_path only, and never to edges
+        shared with old_path -- see calculate_path_cost's docstring.
         """
         old_cost = self.calculate_path_cost(old_path, now=now)
-        new_cost = self.calculate_path_cost(new_path, now=now, offered_load_utilization=offered_load_utilization)
+        shared_edges = self._path_edges(old_path) & self._path_edges(new_path)
+        new_cost = self.calculate_path_cost(
+            new_path, now=now, offered_load_mbps=offered_load_mbps, exclude_edges=shared_edges
+        )
         abs_improvement = old_cost - new_cost
         rel_improvement = abs_improvement / old_cost if old_cost > 0 else 0.0
         accepted = self.is_improvement(
@@ -187,7 +210,7 @@ class PathCost:
             min_abs_reduction=min_abs_reduction,
             min_rel_reduction=min_rel_reduction,
             now=now,
-            offered_load_utilization=offered_load_utilization,
+            offered_load_mbps=offered_load_mbps,
         )
         return {
             "old_cost": round(old_cost, 6),
@@ -196,6 +219,9 @@ class PathCost:
             "relative_improvement": round(rel_improvement, 6),
             "accepted": accepted,
         }
+
+    def _path_edges(self, path: List[str]) -> FrozenSet[str]:
+        return frozenset(self._get_link_id(u, v) for u, v in zip(path, path[1:]))
 
     def _get_link_id(self, u: str, v: str) -> str:
         nodes = sorted([str(u), str(v)])

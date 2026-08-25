@@ -87,6 +87,11 @@ class StaleStatsScenario:
             observed_state, src, dst, threshold=0.7, persistence_required_samples=PERSISTENCE_REQUIRED_SAMPLES
         )
         hotspot_link = link_id(drivers["static"].path[0], drivers["static"].path[1])
+        # flow-video-1 is the real flow mapped onto PRIMARY_PAIR (see
+        # increasing_load.py's comment). Deliberately NOT setting
+        # drivers["proposed"].offered_load_mbps here (2026-08-20) -- see
+        # congestion.py's matching comment / compliance_check.md's
+        # "Revoking the offered-load correction" section.
 
         for sample in range(1, total_samples + 1):
             now_s = sample * SAMPLE_INTERVAL_S
@@ -134,6 +139,11 @@ class StaleStatsScenario:
             observed_state, src, dst, threshold=0.7, persistence_required_samples=PERSISTENCE_REQUIRED_SAMPLES
         )
         hotspot_link = link_id(drivers["static"].path[0], drivers["static"].path[1])
+        # flow-video-1 is the real flow mapped onto PRIMARY_PAIR (see
+        # increasing_load.py's comment). Deliberately NOT setting
+        # drivers["proposed"].offered_load_mbps here (2026-08-20) -- see
+        # congestion.py's matching comment / compliance_check.md's
+        # "Revoking the offered-load correction" section.
 
         last_ground_truth = BASELINE_UTILIZATION
         for sample in range(1, total_samples + 1):

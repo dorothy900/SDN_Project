@@ -264,9 +264,17 @@ class DecisionEngineValidation:
         if below is None:
             engine.logger.log_no_action("Normal traffic remains below threshold")
 
-        # Sustained congestion with insufficient gain.
+        # Sustained congestion with insufficient gain. utilization=0.265 (not
+        # 0.25) since 2026-08-20's churn-adaptive minimum-improvement change:
+        # this link has no churn history, so the floor (not the ceiling)
+        # threshold applies -- 0.265 gives a real but still-too-small ~3.6%
+        # relative reduction, below the 5% floor either way, so this still
+        # correctly demonstrates a rejected "no_improvement" decision (0.25
+        # gave ~9%, which clears the new floor and would be correctly
+        # *accepted* now -- see compliance_check.md's "Churn-adaptive
+        # minimum-improvement threshold" section).
         self._set_path_metrics(state, current_path, utilization=0.83, delay_ms=predicted_delay_ms(0.83), packet_loss=predicted_loss(0.83))
-        self._set_path_metrics(state, low_gain_path, utilization=0.25, delay_ms=predicted_delay_ms(0.25), packet_loss=predicted_loss(0.25))
+        self._set_path_metrics(state, low_gain_path, utilization=0.265, delay_ms=predicted_delay_ms(0.265), packet_loss=predicted_loss(0.265))
         low_gain_violation = ThresholdViolation(
             link_id=self._link_id(current_path[0], current_path[1]),
             metric="utilization",

@@ -90,10 +90,37 @@ class CongestionScenario:
     ) -> int:
         state = build_network_state(self.output_dir, seed=seed)
         src, dst = PRIMARY_PAIR
+        # flow-video-1 is the real flow mapped onto PRIMARY_PAIR (see
+        # increasing_load.py's comment); looked up before make_drivers() so
+        # its service_type ("Video", high-priority + reroute_immediate in
+        # config/policies.yaml) can be passed straight into the proposed
+        # driver -- added 2026-08-20, this policy previously only applied
+        # via priority_policy.py's own evaluate_service_congestion path,
+        # even though this project's single most-used monitored flow was
+        # already configured for it and got no benefit.
+        primary_flow = next((f for f in flows if f.flow_id == "flow-video-1"), None)
         drivers = make_drivers(
-            state, src, dst, threshold=0.7, persistence_required_samples=PERSISTENCE_REQUIRED_SAMPLES
+            state, src, dst, threshold=0.7, persistence_required_samples=PERSISTENCE_REQUIRED_SAMPLES,
+            service_type=primary_flow.service_type if primary_flow else None,
         )
         hotspot_link = link_id(drivers["static"].path[0], drivers["static"].path[1])
+        # Deliberately NOT setting drivers["proposed"].offered_load_mbps
+        # here (2026-08-20): the offered-load self-influence correction
+        # (2026-08-12) was found to block a real, verified switchback/
+        # reroute improvement whenever a candidate shares no edges with
+        # current_path (PRIMARY_PAIR) -- a real 0.46% improvement ballooned
+        # into a rejection. Ablation-tested across all 4 objectively-
+        # selected pairs, both sustained and chronic-intermittent
+        # congestion: disabling it closes PRIMARY_PAIR's gap to `dynamic`
+        # completely with no regression in the other 3 pairs. The
+        # underlying mechanism (PathCost.calculate_path_cost's
+        # offered_load_mbps parameter) is left in place, still tested in
+        # tests/path_cost.py -- it demonstrates a real, still-open
+        # theoretical risk (a candidate that looks acceptable until its
+        # own future load is priced in) this project's 4 tested pairs
+        # didn't happen to hit. See compliance_check.md's "Revoking the
+        # offered-load correction" section for the full ablation and the
+        # accepted trade-off.
 
         for sample in range(1, total_samples + 1):
             now_s = sample * SAMPLE_INTERVAL_S

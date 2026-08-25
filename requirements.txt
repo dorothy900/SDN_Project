@@ -4,3 +4,13 @@ matplotlib>=3.7
 numpy>=1.24
 pyyaml>=6.0
 requests>=2.31
+scipy>=1.18  # experiments/weight_search_comparison.py's DIRECT comparison
+             # (scipy.optimize.direct) -- the project's only scipy usage;
+             # every other stats/optimization method (Spearman, dCor,
+             # permutation tests, Mann-Whitney, GP+EI Bayesian optimization,
+             # simulated annealing) is deliberately hand-rolled in pure
+             # numpy elsewhere, since scipy wasn't available when those were
+             # written. Added 2026-08-19 specifically because DIRECT is a
+             # well-established, non-trivial-to-reimplement-correctly
+             # algorithm and the user opted for the battle-tested
+             # implementation over a from-scratch one for this one method.
