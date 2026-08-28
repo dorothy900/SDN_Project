@@ -148,9 +148,13 @@ def make_architecture_figure(plt) -> None:
     _arrow(ax, (cx, 6.35), (cx, 6.00), label="read link stats + topology")
     _arrow(ax, (cx, 4.85), (cx, 4.60), label="candidate paths + cost")
     _arrow(ax, (cx, 2.55), (cx, 2.10), label="reroute decision (new_path)")
-    # loop back: enforcement -> data plane, bowed out to the left of the main column
-    _arrow(ax, (PX - 0.05, 1.72), (PX - 0.05, 9.55), color="#7c8698", lw=1.2, connectionstyle="arc3,rad=-0.55")
-    ax.text(PX - 0.62, 5.5, "OpenFlow rules pushed to switches", fontsize=7.8, color="#5a6472",
+    # loop back: enforcement -> data plane, right-angle routing along a fixed x outside every
+    # box (same orthogonal style as the config->routing arrow), not a diagonal arc across them.
+    loop_x = PX - 0.45
+    _arrow(ax, (PX, 1.72), (loop_x, 1.72), color="#7c8698", lw=1.2, style="-")
+    _arrow(ax, (loop_x, 1.72), (loop_x, 9.72), color="#7c8698", lw=1.2, style="-")
+    _arrow(ax, (loop_x, 9.72), (PX, 9.72), color="#7c8698", lw=1.2)
+    ax.text(loop_x - 0.1, 5.7, "OpenFlow rules pushed to switches", fontsize=7.8, color="#5a6472",
             style="italic", rotation=90, ha="center", va="center")
     # config -> decision (straight, inside the column) / config -> routing (routed around the
     # outside of the Decision/Enforcement boxes on the right, so it doesn't cross their content)
@@ -171,14 +175,14 @@ def make_architecture_figure(plt) -> None:
          "once at startup. Never re-evaluates --\n"
          "step() always returns reroute=False.",
          "StaticShortestPath only.\nBypasses Monitoring, State, Routing's\ncost formula, and the whole Decision Layer.",
-         7.65, 1.7),
+         7.5, 1.85),
         ("dynamic", "Dynamic",
          "Recomputes the cheapest path every sample\n"
          "via the real cost formula, and reroutes the\n"
          "moment utilization crosses the threshold --\n"
          "no hysteresis, no persistence, no cooldown.",
          "GraphBuilder + PathCost (Routing Layer) +\nDynamicBaseline's own raw threshold check.\nBypasses every Decision Layer gate.",
-         4.975, 2.3),
+         4.825, 2.3),
         ("proposed", "Proposed",
          "Full stability-aware stack via DecisionEngine,\n"
          "every gate below active on every sample:\n"
@@ -192,7 +196,7 @@ def make_architecture_figure(plt) -> None:
          "• Offered-load self-influence correction on\n"
          "  the switchback candidate's own cost",
          "Monitoring -> NetworkState -> Routing\n-> full DecisionEngine -> Enforcement.\nEvery layer above.",
-         0.25, 4.35),
+         0.25, 4.2),
     ]
     for algo, title, desc, scope, y, h in algo_specs:
         color = ALGO_COLOR[algo]
@@ -202,9 +206,12 @@ def make_architecture_figure(plt) -> None:
         ax.add_patch(FancyBboxPatch((RX, y + h - 0.42), RW, 0.42, boxstyle="round,pad=0.0,rounding_size=0.0",
                                      linewidth=0, facecolor=color, alpha=0.85, zorder=2.2))
         ax.text(RX + 0.15, y + h - 0.21, title, fontsize=11.5, fontweight="bold", color="white", va="center", zorder=3)
-        ax.text(RX + 0.15, y + h - 0.68, desc, fontsize=8.4, color="#17181a", va="top", zorder=3, linespacing=1.4)
-        ax.text(RX + 0.15, y + 0.28, "Uses:", fontsize=7.8, fontweight="bold", color="#5a6472", va="top", zorder=3)
-        ax.text(RX + 0.7, y + 0.28, scope, fontsize=7.8, color="#5a6472", va="top", zorder=3, linespacing=1.4)
+        ax.text(RX + 0.15, y + h - 0.68, desc, fontsize=8.0, color="#17181a", va="top", zorder=3, linespacing=1.3)
+        # Anchored with enough clearance above the box's bottom edge for up to 3 wrapped
+        # lines at this fontsize/linespacing -- a lower anchor let this text spill below
+        # the box border for the longer "scope" strings.
+        ax.text(RX + 0.15, y + 0.48, "Uses:", fontsize=7.3, fontweight="bold", color="#5a6472", va="top", zorder=3)
+        ax.text(RX + 0.7, y + 0.48, scope, fontsize=7.3, color="#5a6472", va="top", zorder=3, linespacing=1.3)
 
     fig.tight_layout()
     for ext in ("png", "pdf"):
