@@ -81,6 +81,43 @@ def make_failure_recovery_figure(plt) -> None:
     print("Wrote", out)
 
 
+def make_failure_recovery_reroute_count_figure(plt) -> None:
+    """
+    Reroute count (churn) comparison for failure_recovery, dynamic vs proposed, stable vs
+    unstable case -- the direct churn-reduction evidence for this scenario: proposed's
+    reroute count barely moves between the stable and the flap-then-settle unstable case,
+    while dynamic's roughly doubles, since it has no stability gate against the extra flap.
+    """
+    rows = _load_csv(Path("results/failure_recovery_generalization/summary.csv"))
+    fig, ax = plt.subplots(figsize=(8, 5.2))
+    fig.suptitle(
+        "failure_recovery: reroute count, dynamic vs proposed, 23 real node pairs x 5 seeds\n"
+        "unstable = link flaps down/up again shortly after the first restoration",
+        fontsize=12,
+    )
+
+    cases = ("stable", "unstable")
+    algos = ("dynamic", "proposed")
+    x = range(len(cases))
+    width = 0.32
+    for i, algo in enumerate(algos):
+        means = [st.mean([float(r[f"{case}_{algo}_reroutes"]) for r in rows]) for case in cases]
+        stds = [st.pstdev([float(r[f"{case}_{algo}_reroutes"]) for r in rows]) for case in cases]
+        bars = ax.bar([xi + (i - 0.5) * width for xi in x], means, width, yerr=stds, capsize=4,
+                      label=algo, color=COLOR[algo], alpha=0.85)
+        ax.bar_label(bars, fmt="%.2f", padding=8)
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(cases)
+    ax.set_ylabel("mean reroute count per run, n=23 pairs")
+    ax.legend(fontsize=9)
+
+    fig.tight_layout(rect=(0, 0, 1, 0.88))
+    out = OUTPUT_DIR / "failure_recovery_reroute_count.png"
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print("Wrote", out)
+
+
 def make_increasing_load_figure(plt) -> None:
     rows = _load_csv(Path("results/increasing_load_generalization/persample.csv"))
     summary_rows = _load_csv(Path("results/increasing_load_generalization/summary.csv"))
@@ -375,6 +412,7 @@ def main() -> None:
     make_congestion_figure(plt)
     make_weight_search_figure(plt)
     make_failure_recovery_figure(plt)
+    make_failure_recovery_reroute_count_figure(plt)
     make_increasing_load_figure(plt)
     make_stale_stats_figure(plt)
     make_priority_policy_figure(plt)
