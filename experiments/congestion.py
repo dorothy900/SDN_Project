@@ -3,10 +3,13 @@
 Scenario 2 - Local Link Congestion: Temporary vs Persistent (Experiment B).
 
 Runs two independent phases against fresh driver state each time: a short
-spike below the persistence window (should not trigger a reroute for the
-proposed algorithm) and a sustained overload above the persistence window
-(should trigger a reroute for both dynamic and proposed, but only after
-persistence is satisfied for proposed).
+spike and a sustained overload on the same hotspot link. The monitored flow
+(flow-video-1, service_type="Video") is config/policies.yaml's high-priority,
+reroute_immediate class, so proposed skips its own persistence gate for it
+and reacts to the short spike exactly like dynamic does -- persistence's
+noise-rejection value doesn't show up on this specific flow by design; it
+would on a non-priority one (Web/File Transfer), which this scenario doesn't
+separately track.
 """
 
 from __future__ import annotations

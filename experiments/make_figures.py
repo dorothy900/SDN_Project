@@ -211,65 +211,58 @@ def make_priority_policy_figure(plt) -> None:
 
 def make_congestion_figure(plt) -> None:
     """
-    3-panel congestion figure: sustained/intermittent delay bars, and a churn-vs-delay
-    scatter with every seed's own point plotted individually (not one point per
-    algorithm x phase) -- PRIMARY_PAIR only, 5 seeds, not yet generalized to 23 pairs.
+    2-panel congestion figure from the real 23-pair generalization: delay distribution
+    across pairs, and the reroute-agreement finding (dynamic and proposed reroute
+    identically here because the monitored flow is a reroute_immediate priority class,
+    not because persistence is doing anything -- see congestion.py's module docstring).
     """
-    runs = [_load_csv(Path(f"results/pilot/scenario1-2/congestion_run_{i}.csv")) for i in range(1, 6)]
+    rows = _load_csv(Path("results/congestion_generalization/summary.csv"))
 
-    fig, axes = plt.subplots(1, 3, figsize=(17, 5.2))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.2))
     fig.suptitle(
-        "congestion: local single-pair spike, 5 seeds -- sustained and intermittent phases\n"
-        "PRIMARY_PAIR only (not yet generalized to the 23-pair sample)",
+        "congestion: transient spike vs sustained overload, 23 real node pairs x 5 seeds\n"
+        "monitored flow is a reroute_immediate priority class -- see panel (b)",
         fontsize=13,
     )
 
     algos = ("static", "dynamic", "proposed")
-    phases = ("sustained", "temporary")
-    phase_titles = {"sustained": "(a) Sustained spike", "temporary": "(b) Intermittent spike"}
+    phases = ("temporary", "sustained")
+    phase_labels = {"temporary": "transient\n(8 samples,\n2 violating)", "sustained": "sustained\n(12 samples,\n6 violating)"}
 
-    # Panels (a)/(b): mean delay per algorithm per phase, with seed-to-seed spread as error bars.
-    for ax, phase in zip(axes[:2], phases):
-        means, stds = [], []
+    ax = axes[0]
+    data, tick_labels, colors = [], [], []
+    for phase in phases:
         for algo in algos:
-            per_run_means = [
-                st.mean(float(r["delay_ms"]) for r in rows if r["algorithm"] == algo and r["phase"] == phase)
-                for rows in runs
-            ]
-            means.append(st.mean(per_run_means))
-            stds.append(st.pstdev(per_run_means))
-        bars = ax.bar(algos, means, yerr=stds, capsize=4, color=[COLOR[a] for a in algos], alpha=0.85)
-        ax.bar_label(bars, fmt="%.1f", padding=8)
-        ax.set_ylabel("mean delay (ms), 5 seeds")
-        ax.set_title(phase_titles[phase])
+            data.append([float(r[f"{phase}_{algo}_delay_ms"]) for r in rows])
+            tick_labels.append(f"{phase_labels[phase]}\n{algo}")
+            colors.append(COLOR[algo])
+    bp = ax.boxplot(data, tick_labels=tick_labels, patch_artist=True, widths=0.6)
+    for patch, color in zip(bp["boxes"], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.65)
+    ax.set_ylabel("mean delay (ms), n=23 pairs/box")
+    ax.set_title("(a) Delay distribution")
+    ax.axvline(3.5, color="#c3c2b7", linestyle="--", linewidth=1)
 
-    # Panel (c): reroute count (churn) vs delay -- one point per (algorithm, phase, seed),
-    # not aggregated, so the real seed-to-seed spread (e.g. proposed suppressing some
-    # intermittent-phase reroutes dynamic still takes) is directly visible.
-    ax = axes[2]
-    markers = {"sustained": "o", "temporary": "^"}
-    for algo in algos:
-        for phase in phases:
-            reroutes, delays = [], []
-            for rows in runs:
-                sub = [r for r in rows if r["algorithm"] == algo and r["phase"] == phase]
-                if not sub:
-                    continue
-                reroutes.append(sum(1 for r in sub if r["reroute"] == "True"))
-                delays.append(st.mean(float(r["delay_ms"]) for r in sub))
-            rng = random.Random(abs(hash((algo, phase))) % (2**31))
-            jittered_x = [x + rng.uniform(-0.08, 0.08) for x in reroutes]
-            ax.scatter(jittered_x, delays, color=COLOR[algo], marker=markers[phase], alpha=0.75, s=55)
+    # Panel (b): reroute rate per phase/algorithm -- dynamic and proposed match exactly
+    # (both 1.0/1.0 across all 23 pairs, both phases) because flow-video-1's service_type
+    # ("Video") is config/policies.yaml's reroute_immediate class, so proposed's
+    # persistence gate never actually engages for it here.
+    ax = axes[1]
+    x = range(len(phases))
+    width = 0.25
+    for i, algo in enumerate(algos):
+        vals = [st.mean([float(r[f"{phase}_{algo}_reroutes"]) for r in rows]) for phase in phases]
+        bars = ax.bar([xi + (i - 1) * width for xi in x], vals, width, label=algo, color=COLOR[algo], alpha=0.85)
+        ax.bar_label(bars, fmt="%.2f")
+    ax.set_xticks(list(x))
+    ax.set_xticklabels([phase_labels[p].replace("\n", " ") for p in phases], fontsize=8.5)
+    ax.set_ylabel("mean reroute count, n=23 pairs")
+    ax.set_ylim(0, 1.3)
+    ax.set_title("(b) Reroute rate: dynamic == proposed here (reroute_immediate)")
+    ax.legend(fontsize=9)
 
-    from matplotlib.lines import Line2D
-    color_handles = [Line2D([0], [0], marker="o", color="w", markerfacecolor=COLOR[a], markersize=9, label=a) for a in algos]
-    shape_handles = [Line2D([0], [0], marker=markers[p], color="#555555", linestyle="None", markersize=9, label=p) for p in phases]
-    ax.legend(handles=color_handles + shape_handles, fontsize=8, loc="best")
-    ax.set_xlabel("reroute events in this run/phase (churn)")
-    ax.set_ylabel("mean delay (ms)")
-    ax.set_title("(c) Churn vs delay, all 5 seeds shown individually")
-
-    fig.tight_layout(rect=(0, 0, 1, 0.90))
+    fig.tight_layout(rect=(0, 0, 1, 0.88))
     out = OUTPUT_DIR / "congestion.png"
     fig.savefig(out, dpi=150)
     plt.close(fig)
