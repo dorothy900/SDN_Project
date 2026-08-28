@@ -16,7 +16,7 @@ class StaticShortestPath:
         Return the same shortest path for identical topologies every time.
 
         If several equal-length shortest paths exist, the lexicographically
-        smallest path is selected so the Week 3 Day 2 test is repeatable.
+        smallest path is selected, so repeated calls stay deterministic.
         """
         try:
             candidate_paths = list(nx.all_shortest_paths(self.graph, src, dst))

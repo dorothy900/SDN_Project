@@ -5,9 +5,9 @@ with real Mininet-measured delay/loss, instead of congestion_model.py's
 formula, so a joint (u, delay_residual, loss_residual, churn) dataset has
 genuine, non-degenerate variance in *every* column.
 
-Why this exists: neither of this project's two prior joint-data sources is
+Why this exists: neither of this project's two other joint-data sources is
 enough on its own to build a composite congestion indicator across all 4
-variables (see compliance_check.md's PCA section, 2026-08-19):
+variables:
   - Real Mininet traffic (results/independence_check/,
     results/loss_saturation_check/) has real u/delay/loss with genuine
     residual structure, but no DecisionEngine running -- no churn.
@@ -16,19 +16,16 @@ variables (see compliance_check.md's PCA section, 2026-08-19):
     their delay/loss come from set_link_condition's DEFAULT path, which
     computes delay/loss *exactly* from congestion_model.py's curve --
     delay_residual/loss_residual are therefore ~0 by construction there,
-    carrying essentially no real variance for a PCA to work with (confirmed
-    live: loss_residual's std was 0.00006 in that data, and a PCA fit on it
-    produced a numerically meaningless loading).
+    carrying essentially no real variance for a PCA to work with.
 
 Fix: same campaign/event structure as joint_independence_matrix.py
-(including its 2026-08-19 disjoint-first-link fix -- see that module for
-why sharing a link across campaigns corrupts the recorded data), but
-delay/loss are injected via set_link_condition's delay_ms_override/
-loss_override using the *real* Mininet sample whose achieved_utilization is
-closest to the target -- not the formula. delay_residual/loss_residual
-computed downstream against congestion_model's curve therefore reflect
-genuine measurement variance, the same kind characterized all session via
-LOESS/Breusch-Pagan on the real Mininet data itself.
+(including its disjoint-first-link fix -- see that module for why sharing
+a link across campaigns corrupts the recorded data), but delay/loss are
+injected via set_link_condition's delay_ms_override/loss_override using
+the *real* Mininet sample whose achieved_utilization is closest to the
+target, not the formula. delay_residual/loss_residual computed downstream
+against congestion_model's curve therefore reflect genuine measurement
+variance.
 """
 from __future__ import annotations
 
@@ -51,20 +48,20 @@ from src.routing.congestion_model import predicted_delay_ms, predicted_loss
 from src.routing.graph_builder import GraphBuilder
 
 RANDOM_SEED = 42
-# 6->14 pairs, 15->60 events/pair (2026-08-19): the first pass left too few
-# non-cold-start jitter samples (28/75, mostly repeated values from the
-# rolling window not changing between closely-spaced reads) to say anything
-# reliable about zeta/eta independence. 14 is the real max of disjoint-
-# first-link campaigns this topology supports (verified live: only 14 of
-# 200 candidate pairs have non-overlapping first hops).
+# NUM_PAIRS: 14 is the real max of disjoint-first-link campaigns this
+# topology supports (only 14 of 200 candidate pairs have non-overlapping
+# first hops). EVENTS_PER_PAIR: 60 gives enough non-cold-start jitter
+# samples (the rolling window needs several closely-spaced reads before
+# consecutive values actually differ) to say something reliable about
+# zeta/eta independence.
 NUM_PAIRS = 14
 EVENTS_PER_PAIR = 60
-# Randomized ranges, not fixed constants (2026-08-19): a fixed target
-# utilization makes nearest_real_sample() return the exact same real
-# (delay, loss) pair every time that event type fires, collapsing
-# delay_residual/loss_residual to ~2 distinct points across the whole
-# dataset -- any correlation between them is then a trivial "line through
-# 2 points" artifact (found live: -1.000 Spearman), not a real relationship.
+# Randomized ranges, not fixed constants: a fixed target utilization makes
+# nearest_real_sample() return the exact same real (delay, loss) pair
+# every time that event type fires, collapsing delay_residual/loss_residual
+# to ~2 distinct points across the whole dataset -- any correlation
+# between them would then be a trivial "line through 2 points" artifact,
+# not a real relationship.
 CONGESTED_UTILIZATION_RANGE = (0.55, 0.85)
 BASELINE_UTILIZATION_RANGE = (0.10, 0.40)
 RECOVERY_WINDOW_BUFFER_S = 20.0
@@ -83,8 +80,8 @@ REAL_SAMPLE_SOURCES = [
 
 def load_real_samples() -> List[Tuple[float, float, float]]:
     """(achieved_utilization, delay_ms, loss) triples pooled from every real
-    Mininet run collected this session -- used as a nearest-neighbor lookup
-    table below, not fit to any curve."""
+    Mininet run recorded in REAL_SAMPLE_SOURCES -- used as a nearest-
+    neighbor lookup table below, not fit to any curve."""
     samples: List[Tuple[float, float, float]] = []
     for path in REAL_SAMPLE_SOURCES:
         if not path.exists():
@@ -118,10 +115,10 @@ def run(output_dir: Path = Path("results/hybrid_congestion_churn_matrix")) -> Di
 
     state = build_network_state(output_dir, seed=RANDOM_SEED)
     builder = GraphBuilder(state)
-    # Over-fetch + de-dupe by first link -- same fix as joint_independence_matrix.py
-    # (2026-08-19): campaigns sharing a real link corrupt each other's
-    # recorded state since they all write to one NetworkState in one
-    # globally-shuffled event order.
+    # Over-fetch + de-dupe by first link -- same fix as
+    # joint_independence_matrix.py: campaigns sharing a real link corrupt
+    # each other's recorded state since they all write to one NetworkState
+    # in one globally-shuffled event order.
     candidate_pairs = builder.select_test_pairs(limit=NUM_PAIRS * 8, min_candidate_paths=2)
 
     rng = random.Random(RANDOM_SEED)

@@ -1,54 +1,8 @@
 #!/usr/bin/env python3
 """
-Failure/Recovery Node-Pair Generalization - closes the one open item flagged
-in compliance_check.md's "Node-pair generalization" section (2026-08-20):
-the 17-pair congestion generalization check was never re-run through
-failure_recovery.py, so recovery-switchback behavior was only ever verified
-on PRIMARY_PAIR.
-
-The original congestion-side pair-selection script (select_generalization_
-pairs.py) is not present in this repository (lost along with the original
-memory notes -- see compliance_check.md's session-continuity issue,
-2026-08-24). This is a fresh implementation of the same *documented*
-selection criterion, not a recovery of the original pair list -- the
-specific 17 pairs will differ from the original congestion-side run, but
-the sampling method is the same:
-
-  1. Shortest path 3-5 hops (matches the original 4-pair check's own
-     qualifying criterion, e.g. PRIMARY_PAIR "2"->"7" is 4 hops).
-  2. At least one genuine alternative route -- checked directly (not
-     assumed): remove every edge of the shortest path and confirm src/dst
-     are still connected in the remaining graph.
-  3. Stratified by the pair's failure-hop background tier -- which SNDlib
-     data tier (see sndlib_demand.py) the pair's own first-hop edge (the
-     edge failure_recovery.py's _run_case always fails first, mirrored
-     here) falls into: tier1 = real GEANT demand data, tier2 = nobel-eu
-     structural-diversity fallback, tier3 = uniform fallback. Same 8/2/6
-     split as the original congestion-side 17-pair check (tier2's pool is
-     inherently small -- only 6 of 61 edges are tier2-covered).
-  4. Selection is pre-registered (computed once, deterministically, before
-     any scenario is run) via even-index sampling within each tier bucket,
-     sorted by hop count then node id -- no randomness, no outcome-based
-     cherry-picking.
-
-Metric: does `proposed` reach the same end-of-scenario switchback state as
-`dynamic` (both cases: "stable" restoration, "unstable" flap-then-settle),
-across 5 seeds per pair per case -- mirroring the "verified across 5
-seeds, not asserted" convention already used for PRIMARY_PAIR itself in
-compliance_check.md's recovery-switchback sections.
-
-Caveat on that convention's actual strength, found in this session's
-scenario design audit (finding F4): the 5 seeds only vary
-build_network_state()'s tier-3 (uniform-fallback) edges by a full redraw --
-tier-1/tier-2 edges only jitter by U(0.0, 0.01), effectively unchanged
-across seeds. For 4 of these 23 pairs (0->9, 1->27, 2->9, 7->9), every
-candidate path GraphBuilder considers is tier-1/tier-2 only, so all 5
-seeds present nearly identical input to the algorithms -- "5/5 seed
-agreement" for those 4 pairs is close to re-running one input 5 times, not
-5 independent draws. The other 19/23 pairs have >=1 candidate touching a
-tier-3 edge and carry real seed-to-seed variation. Treat agreement on
-those 4 pairs as weaker evidence than the same-looking number elsewhere in
-this file's output.
+Failure/Recovery Node-Pair Generalization - generalizes failure_recovery.py's
+recovery-switchback check from a single monitored pair (PRIMARY_PAIR) to a
+pre-registered sample of 23 real GEANT node pairs, 5 seeds each.
 
 Run as: python3 -m experiments.failure_recovery_generalization
 """
@@ -108,23 +62,28 @@ def select_pairs(graph: nx.Graph) -> Tuple[List[Tuple[str, str]], Dict[int, int]
                 continue
             if not nx.has_path(graph, u, v):
                 continue
+            # Keep only pairs whose shortest path is 3-5 hops (the topology's modal range).
             path = nx.shortest_path(graph, u, v)
             hops = len(path) - 1
             if not (3 <= hops <= 5):
                 continue
+            # Require a genuine alternative route, not just a nominally-alive graph.
             if not _has_genuine_alternative(graph, path):
                 continue
+            # Stratify by the SNDlib data tier backing the pair's own first-hop edge.
             tier = _classify_tier(*sorted((path[0], path[1]), key=int))
             buckets[tier].append((u, v, hops))
 
     selected: List[Tuple[str, str]] = []
     pool_sizes = {}
     for tier, target in TIER_TARGETS.items():
+        # Sort by hop count then node id so the even-index draw below is deterministic.
         pool = sorted(buckets[tier], key=lambda t: (t[2], int(t[0]), int(t[1])))
         pool_sizes[tier] = len(pool)
         take = min(target, len(pool))
         if take == 0:
             continue
+        # Even-index sampling across the sorted pool -- no randomness, no cherry-picking.
         step = max(1, len(pool) // take)
         chosen = pool[::step][:take]
         selected.extend([(u, v) for u, v, _ in chosen])
@@ -135,18 +94,7 @@ BOUNDARY_TARGETS = {"short": (1, 2, 3), "long": (6, 7, 3)}
 
 
 def select_boundary_pairs(graph: nx.Graph) -> Dict[str, List[Tuple[str, str]]]:
-    """
-    Supplementary edge-of-range pairs, added 2026-08-24 after the core
-    3-5-hop check (61.7% of all node pairs, the topology's modal range --
-    see compliance_check.md) was flagged as excluding both the "easy" short
-    end (1-2 hops, 27% of pairs, 83-87% alternative-route availability) and
-    the "hard" long tail (6-8 hops, 11% of pairs, availability collapsing
-    to 29%/15%/0%). Not a random sample -- deterministic even-index draw
-    from each qualifying pool, same method as select_pairs(). 3 per
-    category: enough to check whether the core finding holds at the edges
-    without overclaiming exhaustive coverage (the 7-hop pool itself only
-    has 3 qualifying pairs total, so "long" is close to exhaustive already).
-    """
+    """Supplementary edge-of-range pairs (1-2 hop "short", 6-8 hop "long") outside select_pairs()'s 3-5 hop core."""
     nodes = sorted(graph.nodes(), key=int)
     result: Dict[str, List[Tuple[str, str]]] = {}
     for label, (lo, hi, target) in BOUNDARY_TARGETS.items():
@@ -198,10 +146,12 @@ def _run_case(
     for sample in range(1, total_samples + 1):
         now_s = sample * SAMPLE_INTERVAL_S
         topology_changed = False
+        # Restore the failed link at RESTORE_SAMPLE (both cases).
         if sample == RESTORE_SAMPLE:
             set_link_condition(state, failed_link, status="up", now=now_s)
             proposed.on_link_recovered(failed_link, now_s)
             topology_changed = True
+        # Unstable case only: flap the link back down, then up again, right after restore.
         if unstable and sample == FLAP_DOWN_SAMPLE:
             set_link_condition(state, failed_link, status="down", now=now_s)
             proposed.on_link_flap()
@@ -212,6 +162,7 @@ def _run_case(
             topology_changed = True
 
         if sample == FAILURE_SAMPLE:
+            # Trigger the failure itself: fail the link and drive both algorithms' reactions.
             set_link_condition(state, failed_link, status="down", now=now_s)
             dynamic_result = dynamic.step(now_s=now_s, topology_changed=True)
             proposed_action = proposed.on_link_failure(failed_link, now_s)
@@ -221,6 +172,8 @@ def _run_case(
             proposed_result = proposed.step(now_s=now_s)
 
         static_result_path = static.path
+        # Only accumulate metrics from the failure onward -- pre-failure samples are identical
+        # across all three algorithms and would just dilute the post-failure comparison.
         if sample >= FAILURE_SAMPLE:
             static_delays.append(
                 compute_flow_metrics(state, static_result_path, MONITORED_FLOW.offered_load_mbps)["delay_ms"]
@@ -281,14 +234,7 @@ def run_pair(src: str, dst: str, group: str = "", hops: int = 0) -> Dict[str, ob
 
 
 def labeled_pairs_23(graph: nx.Graph = None) -> List[Tuple[str, Tuple[str, str]]]:
-    """
-    The same 23-pair sample (17 core 3-5-hop + 6 boundary + PRIMARY_PAIR)
-    used by this module's own generalization check, exposed for reuse by
-    the other scenarios' generalization scripts (stale_stats,
-    increasing_load, priority_policy) so all four draw the identical,
-    pre-registered pair sample rather than each re-deriving their own --
-    keeps results directly comparable pair-for-pair across scenarios.
-    """
+    """The 23-pair sample (17 core + 6 boundary + PRIMARY_PAIR), shared with the other scenarios' generalization scripts."""
     if graph is None:
         from src.monitor.link_capacity import _load_geant_graph
         graph = _load_geant_graph()
@@ -355,6 +301,9 @@ def main() -> None:
     print("Wrote", output_dir / "summary.csv")
 
     n = len(rows)
+    # Caveat: build_network_state() only fully redraws tier-3 edges per seed; tier-1/tier-2
+    # edges barely jitter, so for pairs whose paths never touch a tier-3 edge (0->9, 1->27,
+    # 2->9, 7->9), a "5/5 seed agreement" below is close to re-running one input 5 times.
     stable_full_agree = sum(1 for r in rows if r["stable"]["agreement_rate"] == 1.0)
     unstable_full_agree = sum(1 for r in rows if r["unstable"]["agreement_rate"] == 1.0)
     mean = lambda vals: sum(vals) / len(vals)

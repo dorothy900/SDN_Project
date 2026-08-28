@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-History Store - Store historical network data
-Week 2 Day 3: Rolling history window with current, mean, max, trend
+History Store - store historical network data in a rolling window,
+exposing current/mean/max/trend summaries.
 """
 from collections import deque
 from datetime import datetime

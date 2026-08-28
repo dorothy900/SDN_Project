@@ -1,46 +1,9 @@
 #!/usr/bin/env python3
 """
-Run Sensitivity Analysis - parameter justification for config/decision.yaml.
-
-The thresholds in config/decision.yaml (utilization=0.7, persistence samples,
-hold-down duration, ...) were set once at project scaffolding and never
-empirically revisited. This script sweeps the parameters that most directly
-shape "Proposed"'s behavior and re-runs it, via the real DecisionEngine
-(src/decision/decision_engine.py) against the real simulation harness
-(experiments/simulation_common.py), so the trade-offs behind the chosen
-defaults are backed by actual measured data rather than asserted.
-
-Three sweeps:
-  A. utilization threshold x persistence-sample-count, replayed end-to-end
-     through the real DecisionEngine against the Increasing Load ramp
-     (Experiment A's trace) -- shows how early/late Proposed reacts and how
-     much churn results.
-  B. hold-down duration, exercised directly against StabilityManager (the
-     same real class Stage 5's T-011 validates) with a steady stream of
-     reroute-worthy attempts -- shows how many of them each setting allows
-     versus blocks.
-  C. path_cost_weights (alpha/beta/gamma/delta/epsilon) -- unlike A and B,
-     these five numbers (config/decision.yaml) were never swept at all before
-     this pass; they were set once at project scaffolding and never
-     empirically revisited. Sweeps each weight individually against three
-     real GEANT candidate paths deliberately given contrasting conditions
-     (one bad on utilization, one on delay, one on loss) so a weight change
-     can actually flip which path wins, plus an isolation test for delta and
-     epsilon specifically (see _run_cost_weight_sweep's docstring for why
-     those two needed a different kind of check).
-  D. alpha x beta x gamma, jointly (not one-at-a-time like C) against the
-     real Increasing Load ramp via ProposedDriver/DecisionEngine -- C's
-     one-at-a-time sweep only characterizes sensitivity around the current
-     default (changing one weight while the other four sit at their
-     defaults); the actual flip boundary between any two paths is a
-     hyperplane in the full 5-D weight space, so a flip point found by
-     varying one weight in isolation is only valid at that specific
-     operating point, not in general (confirmed directly: sweeping alpha
-     with gamma fixed at 0.2 vs 0.8 moves which path wins at low alpha from
-     C to B). This sweep evaluates the full grid jointly and against a real
-     scenario trace (churn/timing), not just a synthetic path-cost
-     comparison, to see whether that interaction actually changes which
-     region of the grid looks preferable in practice.
+Run Sensitivity Analysis - parameter justification for config/decision.yaml,
+sweeping threshold/persistence, hold-down, and cost weights (individually and
+jointly) through the real DecisionEngine and simulation harness so the
+chosen defaults are backed by measured data rather than asserted.
 """
 
 from __future__ import annotations
@@ -143,6 +106,7 @@ class SensitivityAnalysis:
         }
 
     def _run_threshold_persistence_sweep(self) -> List[Dict[str, object]]:
+        """Replays threshold x persistence-sample-count end-to-end against the Increasing Load ramp."""
         rows: List[Dict[str, object]] = []
         src, dst = PRIMARY_PAIR
 
@@ -185,17 +149,10 @@ class SensitivityAnalysis:
 
     def _run_hold_down_sweep(self) -> List[Dict[str, object]]:
         """
-        Exercise StabilityManager.allow_reroute()/record_reroute() directly,
-        the same real class Stage 5's T-011 already validates, rather than
-        through the full path-selection pipeline: after a real reroute moves
-        traffic off the congested link, find_best_path() generally re-finds
-        that same new path on the next check, so a single-hotspot-link trace
-        never produces a second distinct "better path" to hold down against
-        -- hold-down's effect would look identical at every setting for the
-        wrong reason (nothing to suppress), not because hold-down doesn't
-        matter. Driving the same real stability primitive directly against a
-        steady stream of reroute-worthy attempts isolates what hold-down
-        alone contributes.
+        Exercises StabilityManager.allow_reroute()/record_reroute() directly rather than through
+        the full path-selection pipeline: a single-hotspot-link trace never produces a second
+        distinct "better path" to hold down against once the first reroute clears the hotspot,
+        so hold-down's effect would look identical at every setting for the wrong reason.
         """
         rows: List[Dict[str, object]] = []
         pair = PRIMARY_PAIR
@@ -262,34 +219,7 @@ class SensitivityAnalysis:
         return {"cost_A": costs["A"], "cost_B": costs["B"], "cost_C": costs["C"], "winner": winner}
 
     def _run_cost_weight_sweep(self):
-        """
-        Sweep alpha/beta/gamma individually (holding the other two at their
-        current defaults) against the three contrasting paths, then run
-        delta and epsilon as separate isolation checks rather than folding
-        them into the same grid.
-
-        delta's term used to be a hardcoded-zero "priority" placeholder,
-        structurally inert regardless of its value -- fixed 2026-08-12:
-        _calculate_edge_cost now multiplies delta by a real per-link
-        instability/churn score (NetworkState.get_link_churn_score(),
-        recorded by DecisionEngine._execute_reroute() every time a reroute
-        actually happens -- see tests/graph_builder.py for a test that
-        proves this now moves cost). The isolation sweep below still shows
-        delta as "no effect" for a *different*, more mundane reason: this
-        test's NetworkState is freshly built each run via
-        _build_contrast_state() with no reroute history, so every link's
-        churn score is 0.0 regardless of delta's value -- there's simply
-        nothing to react to here, not a dead weight.
-
-        epsilon's reliability_penalty only becomes non-zero if a link's
-        LinkStatistics.status is "down" while the edge is *still present* in
-        the active graph -- which happens if code calls
-        update_link_statistics(status="down") without also calling
-        set_link_status()/mark_link_failed() (the two are tracked
-        separately, see NetworkState). Properly failing a link instead
-        removes its edge from the graph entirely, making epsilon moot for
-        that edge regardless of its value. Both are tested directly below.
-        """
+        """Sweeps alpha/beta/gamma individually against three contrasting paths, then delta/epsilon as separate isolation checks."""
         weight_rows: List[Dict[str, object]] = []
         state = self._build_contrast_state(seed=0)
 
@@ -307,7 +237,10 @@ class SensitivityAnalysis:
                     }
                 )
 
-        # delta isolation: sweep with everything else fixed at defaults.
+        # delta isolation: sweep with everything else fixed at defaults. delta multiplies
+        # NetworkState.get_link_churn_score(), but this freshly-built state has no reroute
+        # history, so every link's churn score is 0.0 -- delta shows "no effect" here for
+        # a mundane reason (nothing to react to), not because it's a dead weight.
         delta_rows: List[Dict[str, object]] = []
         for value in DELTA_GRID:
             weights = dict(CURRENT_DEFAULT_COST_WEIGHTS)
@@ -317,7 +250,9 @@ class SensitivityAnalysis:
 
         # epsilon isolation, case 1: inconsistent state (status says down,
         # edge still in the active graph) -- update_link_statistics() only,
-        # no set_link_status()/mark_link_failed() call.
+        # no set_link_status()/mark_link_failed() call. This is the only case where
+        # epsilon's reliability_penalty can be non-zero (case 2 below removes the edge
+        # entirely, making epsilon moot regardless of its value).
         inconsistent_state = self._build_contrast_state(seed=1)
         inconsistent_state.update_link_statistics(
             LinkStatistics(
@@ -356,13 +291,10 @@ class SensitivityAnalysis:
 
     def _run_joint_weight_scenario_sweep(self) -> List[Dict[str, object]]:
         """
-        Grid search alpha x beta x gamma jointly, each combination replayed
-        through the real Increasing Load ramp via the real ProposedDriver ->
-        DecisionEngine -> PathCost -> GraphBuilder chain (same real classes
-        Sweep A already drives), not the isolated synthetic path comparison
-        Sweep C used. Weights are overridden on the driver's live
-        GraphBuilder right after construction, before any step() calls, so
-        every candidate-path decision during the run uses this combination.
+        Grid search alpha x beta x gamma jointly (not one-at-a-time like _run_cost_weight_sweep)
+        against the real Increasing Load ramp -- a one-at-a-time sweep only characterizes
+        sensitivity around the current default, since the true flip boundary between two
+        paths is a hyperplane in the full weight space.
         """
         rows: List[Dict[str, object]] = []
         src, dst = PRIMARY_PAIR
@@ -509,12 +441,9 @@ class SensitivityAnalysis:
         if delta_rows:
             lines.append("## delta (link instability/churn weight) -- isolation check")
             lines.append(
-                "As of 2026-08-12, `_calculate_edge_cost` (src/routing/graph_builder.py) multiplies delta "
+                "`_calculate_edge_cost` (src/routing/graph_builder.py) multiplies delta "
                 "by a real per-link churn score (NetworkState.get_link_churn_score(), recorded by "
-                "DecisionEngine._execute_reroute() whenever a reroute actually happens) -- this replaced the "
-                "previous hardcoded-zero \"priority\" placeholder, which was structurally inert regardless of "
-                "delta's value (priority is a per-flow concept, not a link-level one, so it never fit this "
-                "shared graph cleanly; churn is a genuine link-level property, so it does). The sweep below "
+                "DecisionEngine._execute_reroute() whenever a reroute actually happens). The sweep below "
                 "still shows identical costs across the whole delta grid -- but that's expected here, not a "
                 "sign delta is dead: this sweep's NetworkState is built fresh each run "
                 "(_build_contrast_state()) with no reroute history, so every link's churn score is 0.0 no "

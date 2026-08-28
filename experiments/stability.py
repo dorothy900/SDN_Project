@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Run Stability Validation - Week 5 automation.
+Run Stability Validation - exercise hysteresis, hold-down, emergency
+failure bypass, recovery-window switch-back, and priority policy, and
+persist the resulting deliverables.
 """
 
 from __future__ import annotations
@@ -30,7 +32,25 @@ from src.stability.traffic_policy import TrafficPolicy
 
 
 class StabilityValidation:
-    """Run Week 5 Day 1-6 checks and persist Stage 5 deliverables."""
+    """
+    Run stability-mechanism validation checks and persist Stage 5
+    deliverables.
+
+    Day 6 (_run_stability_integration) hand-composes hysteresis,
+    persistence, hold-down, and budget itself rather than calling
+    DecisionEngine, and calls PersistenceChecker.evaluate_sample()
+    directly -- its strict-consecutive "not is_violation -> full
+    clear_window()" behavior is real and correct for this narrow
+    milestone demonstration, but is NOT what DecisionEngine's real reroute
+    path uses: that path calls leak_persistence()/PersistenceChecker.
+    leak_window() instead, a 1:1 leak rather than a full clear (see
+    decision_engine.py's leak_persistence() docstring). Read this file's
+    naive_reroutes/stable_reroutes numbers as "how these stability
+    primitives behave in isolation," not as a description of current
+    production DecisionEngine behavior -- for that, see the Stage 6
+    scenario experiments (experiments/*_generalization.py), which
+    exercise the real engine.
+    """
 
     def __init__(self, output_dir: Optional[Path] = None):
         self.output_dir = output_dir or Path("results/stability")
@@ -305,7 +325,11 @@ class StabilityValidation:
             "# Stability Integration Report\n\n"
             "- Naive threshold-only behavior would reroute %d times on this trace.\n"
             "- Combined stability control rerouted %d time(s).\n"
-            "- Oscillation was reduced by %d reroute attempts while sustained congestion still triggered action.\n"
+            "- Oscillation was reduced by %d reroute attempts while sustained congestion still triggered action.\n\n"
+            "> This trace hand-composes the stability primitives directly (see this module's own "
+            "docstring) using strict-consecutive persistence -- it does not reflect DecisionEngine's "
+            "current leaky-bucket production reroute path. See the Stage 6 scenario experiments "
+            "for that.\n"
             % (naive_reroutes, stable_reroutes, naive_reroutes - stable_reroutes),
             encoding="utf-8",
         )

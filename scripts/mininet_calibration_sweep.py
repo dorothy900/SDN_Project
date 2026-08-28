@@ -1,53 +1,10 @@
 #!/usr/bin/env python3
 """
-Mininet Multi-Link Calibration Sweep - extends mininet_loss_saturation_check.py's
-proven (utilization, delay, loss) measurement recipe from one real GEANT edge
-to every real edge this VM can actually saturate, specifically to attack the
-single-link confound this session's scenario design audit flagged (finding
-F9 / the delay-curve refit's own documented caveat):
-
-  congestion_delay_bump_ms's high-utilization shape rests on 22 of 23 real
-  u>0.6 samples coming from ONE link (GEANT 12<->20, s5<->s14) -- even after
-  the Theil-Sen refit, real delay for u>0.6 still runs +108.8ms above the
-  curve's prediction on average, and it's undecidable whether that's a real
-  queueing effect or that one link's idiosyncratic buffer sizing.
-  congestion_loss_bump's onset/scale fit was flatly REJECTED on the same
-  single-link 77-sample set (residual dCor=0.42, p<0.001 even at the best
-  achievable fit).
-
-Only 2 real GEANT edges carry the "155 Mbps" LinkLabel that scales down to
-20Mbit in this project's Mininet config (src/monitor/link_capacity.py) --
-comfortably below the ~50-55Mbit/s this VM's own iperf UDP generation can
-reach, which is what made genuine saturation (and therefore observable
-loss) possible on GEANT 12<->20 in the first place. GEANT 21<->27 is the
-other one, and has never been measured for real before this. Both are
-driven through the identical DecisionEngine-free, direct-link setup as
-mininet_loss_saturation_check.py (no path computation involved -- this is
-about the link-level congestion_model.py curves, not routing behavior).
-
-Also reports each real sample against what src/routing/congestion_model.py's
-Layer-1 curves (predicted_delay_ms/predicted_loss) would have predicted at
-that same measured utilization, so the resulting residuals extend the
-existing evidence base to a second link instead of only ever describing
-one link's behavior. This does NOT calibrate experiments/simulation_common.
-py's separate Layer-2 per-flow overlay (compute_flow_metrics, applied only
-downstream of a *path* selection, not a single link) -- that needs a
-follow-up end-to-end path measurement, out of scope here.
-
-First real run (2026-08-24, 55/60 samples, both edges): confirmed real loss
-onset sits below the curve's assumed 0.7 threshold on BOTH edges
-independently (substantial real loss already measured at u=0.58-0.65) --
-cross-link corroboration of the already-rejected loss fit, with an
-actionable number this time. The delay comparison from that run was not
-usable as-is: achieved_utilization (averaged over ~9.5s) and real_delay_ms
-(a 3-ping snapshot ~2-5s into that span) turned out to describe different,
-only partially-overlapping windows -- real_delay correlated far more with
-requested_rate (Spearman 0.89) than with this script's own
-achieved_utilization (0.35), a measurement-timing artifact rather than
-evidence about the curve itself. Fixed same day: utilization is now
-measured over exactly the ping's own window, nothing wider. Delay/loss
-residuals from the first run should not be treated as informative about
-congestion_delay_bump_ms; re-run to get a comparable measurement.
+Mininet Multi-Link Calibration Sweep - real (utilization, delay, loss)
+measurements across multiple real GEANT edges, reported against
+congestion_model.py's predicted curves, to check whether the production
+delay/loss curves' calibration holds beyond the single link they were
+originally fit on.
 
 Run as: sudo python3 scripts/mininet_calibration_sweep.py
     [--edges 12:20,21:27] [--rates 4,8,12,16,18,20,24,28,35,45] [--trials 3]
@@ -82,12 +39,13 @@ OF_VERSION = "OpenFlow13"
 HOST_LINK_DELAY_MS = 1.0
 RANDOM_SEED = 42
 
+# congestion_delay_bump_ms's high-utilization shape rests on 22 of 23 real u>0.6 samples
+# coming from ONE link (12<->20) -- these two edges break that single-link confound.
 # Every real GEANT edge whose LinkLabel scales to a Mininet capacity this VM
 # can actually saturate (see src/monitor/link_capacity.py's REAL_LINK_LABEL_
 # TO_MBPS: "155 Mbps" -> 20Mbit, well under the ~50-55Mbit generation
-# ceiling established twice in results/correlation_check and results/
-# independence_check). Confirmed by direct graph query
-# (REAL_LINK_LABEL_TO_MBPS-labeled edges, this session): these are the only
+# ceiling established in results/correlation_check and results/
+# independence_check). Confirmed by direct graph query: these are the only
 # two "155 Mbps" edges in the whole 61-edge topology.
 DEFAULT_EDGES = [("12", "20"), ("21", "27")]
 REQUESTED_RATES_MBPS = [4, 8, 12, 16, 18, 20, 24, 28, 35, 45]
@@ -97,8 +55,8 @@ IPERF_DURATION_S = 8
 # (iperf itself, unlike TCP, has no slow-start, but the switch/queue needs a
 # moment to reach a steady occupancy). Measurement then happens entirely
 # inside the ping call below -- see the loop's own comment for why this
-# matters (2026-08-24 real-run finding: the previous version's utilization
-# and delay windows didn't overlap cleanly).
+# matters: utilization and delay must be measured over the same window or
+# they describe different conditions.
 WARMUP_S = 2.0
 PING_COUNT = 5
 PING_TIMEOUT_S = 1
@@ -179,16 +137,12 @@ def measure_one_edge(net, topo, collector, node_u, node_v, rates, trials, output
         time.sleep(WARMUP_S)
 
         # Utilization and delay must come from the SAME window, or the two
-        # aren't comparable -- the first real run of this script (2026-08-24)
-        # measured utilization as an average over ~9.5s (t0 taken before
-        # iperf even started, t1 taken 4.5s after the ping) while delay was a
-        # 3-ping snapshot ~2-5s into that span. Result: real_delay correlated
-        # far more with requested_rate (Spearman 0.89) than with this
-        # script's own achieved_utilization (0.35) -- a measurement-timing
-        # artifact, not evidence the delay curve itself is wrong. Fixed by
-        # bracketing t0/t1 tightly around the ping call and nothing else, so
-        # "achieved_utilization" describes exactly the window "real_delay_ms"
-        # was measured in.
+        # aren't comparable: averaging utilization over a window wider than
+        # (or offset from) the delay snapshot it's compared against makes
+        # them describe different conditions, not the same one twice.
+        # Bracketing t0/t1 tightly around the ping call below keeps
+        # "achieved_utilization" describing exactly the window
+        # "real_delay_ms" was measured in.
         t0_stats = collector.parse_ovs_port_stats(su.name)
         collector.calculate_rates(t0_stats, sample_time=time.time())
 
@@ -208,6 +162,8 @@ def measure_one_edge(net, topo, collector, node_u, node_v, rates, trials, output
             continue
 
         achieved_u = collector.calculate_utilization(port_entry)
+        # Layer-1 (single-link) curves only -- this does not calibrate simulation_common.py's
+        # separate Layer-2 per-flow overlay, which only applies downstream of a path selection.
         predicted_delay = predicted_delay_ms(achieved_u)
         predicted_loss_v = predicted_loss(achieved_u)
         results.append({

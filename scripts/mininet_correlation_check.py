@@ -5,11 +5,11 @@ packet loss are actually correlated on a real link, using real generated
 traffic, not the offline simulator's hand-chosen queueing curves.
 
 Motivation: GraphBuilder's cost formula assumes utilization/delay/loss are
-"different symptoms of the same congestion" (documented in compliance_check.md
-and the reason for the 2026-08-12 residual fix), and the offline simulator
-enforces that as a hard deterministic function (congestion_model.py). Both are
-justified by real queueing-theory intuition, but neither is evidence from this
-project's own real network. This script generates that evidence: real UDP
+"different symptoms of the same congestion" (the reason for beta/gamma's
+residual pricing), and the offline simulator enforces that as a hard
+deterministic function (congestion_model.py). Both are justified by real
+queueing-theory intuition, but neither is evidence from this project's own
+real network. This script generates that evidence: real UDP
 traffic (iperf) sweeps one real link through a range of utilization levels,
 and at each level, real delay (src/monitor/delay_prober.py, ping-based) and
 real packet loss (StatisticsCollector, OVS drop counters -- the same
@@ -20,8 +20,7 @@ actually-achieved throughput diverge near saturation (netem/htb drops), so the
 achieved value is what should correlate with delay/loss, not the requested one.
 
 Spearman rank correlation (not Pearson) is used to test monotonic dependence
-without assuming a specific functional form (see compliance_check.md's
-discussion of monotonicity as a diagnostic vs. curve-fitting).
+without assuming a specific functional form.
 
 Run as: sudo python3 scripts/mininet_correlation_check.py
 """
@@ -53,11 +52,10 @@ HOST_LINK_DELAY_MS = 1.0
 # adjacency already exercised by mininet_delay_measurement.py's edge list).
 NODE_U, NODE_V = "s1", "s2"
 
-# Target utilization levels to sweep (fraction of this link's real configured
-# bandwidth -- topology.py resolves per-link bandwidth from real GEANT data
-# as of 2026-08-12, so this is no longer a flat assumed 100Mbit for every
-# link; see topo.get_link_bw_mbps() in main()). Achieved utilization is
-# measured independently, not assumed to hit these
+# Target utilization levels to sweep (fraction of this link's real
+# configured bandwidth -- topology.py resolves per-link bandwidth from
+# real GEANT data, see topo.get_link_bw_mbps() in main()). Achieved
+# utilization is measured independently, not assumed to hit these
 # exactly -- see module docstring.
 TARGET_UTILIZATION_LEVELS = [0.1, 0.3, 0.5, 0.7, 0.9]
 TRIALS_PER_LEVEL = 2

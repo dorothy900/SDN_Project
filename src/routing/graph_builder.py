@@ -41,8 +41,8 @@ class GraphBuilder:
         """
         Build a graph where every edge has a deterministic routing weight.
 
-        When no live statistics are available, a low default cost keeps the edge
-        usable so Week 3 baselines can still be verified offline.
+        When no live statistics are available, a low default cost keeps the
+        edge usable so baselines can still be verified offline.
 
         now is forwarded to delta's churn lookup (see _calculate_edge_cost) --
         pass the same synthetic clock a caller is driving DecisionEngine with
@@ -121,7 +121,7 @@ class GraphBuilder:
         output_path: Path,
         max_paths: int = 3,
     ) -> Dict[str, Dict[str, object]]:
-        """Persist candidate paths to JSON for the Week 3 Day 1 deliverable."""
+        """Persist candidate paths to JSON."""
         data = self.enumerate_candidate_paths(pairs, max_paths=max_paths)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w", encoding="utf-8") as handle:
@@ -143,10 +143,9 @@ class GraphBuilder:
 
     def select_test_pairs(self, limit: int = 4, min_candidate_paths: int = 2) -> List[Tuple[str, str]]:
         """
-        Pick representative source-destination pairs with multiple valid paths.
-
-        This keeps Week 3 verification deterministic while still proving the
-        graph builder can surface alternate paths where they exist.
+        Pick representative source-destination pairs with multiple valid
+        paths, deterministically, proving the graph builder can surface
+        alternate paths where they exist.
         """
         graph = self.build_weighted_graph()
         nodes = sorted(str(node) for node in graph.nodes())
@@ -163,86 +162,23 @@ class GraphBuilder:
 
     def _calculate_edge_cost(self, link_stats, link_id: str, now: Optional[float] = None) -> float:
         """
-        Translate the dissertation cost function into a single edge weight.
+        Combine one edge's real-measured signals into a single routing weight.
 
-        delta's term was "priority", hardcoded to 0.0 (a dead weight -- never
-        connected to anything, since priority is inherently a per-flow
-        concept and this graph is shared across all flows). Replaced
-        2026-08-12 with a per-link instability/churn score instead: how
-        often this link has recently been added to or removed from an
-        installed path (NetworkState.get_link_churn_score(), fed by
-        DecisionEngine._execute_reroute() every time a reroute actually
-        happens). Unlike priority, this is a genuine link-level property, so
-        it fits the one-shared-graph design without needing a separate graph
-        per flow/service type.
-
-        beta/gamma use *residuals* against congestion_model.predicted_delay_ms/
-        predicted_loss (fixed 2026-08-12), not raw delay_ms/packet_loss. In a
-        real network, delay and loss are largely symptoms of utilization
-        (queueing/buffer overflow), so feeding their raw values into an
-        additive formula alongside alpha*utilization double-counts the same
-        congestion signal (quantified: at u=0.9 the true d(cost)/du was ~1.7x
-        the alpha term alone -- see compliance_check.md). Subtracting each
-        link's utilization-predicted delay/loss leaves only the part beta/
-        gamma should actually be pricing: congestion *beyond* what this
-        link's utilization already explains (a physically longer link, a
-        real queueing anomaly). A link performing exactly as utilization
-        predicts contributes zero extra cost from these two terms; residuals
-        are signed, not clamped at zero, so a link doing *better* than its
-        utilization predicts is rewarded, not just never penalized.
-
-        Because delay_residual_ms/loss_residual can be negative, the sum
-        below is floored at MIN_EDGE_COST rather than returned as-is (fixed
-        2026-08-12, after a real run: a background link's raw delay fell far
-        enough below congestion_model's prediction at high utilization that
-        the total went negative, and networkx's Dijkstra correctly raised
-        rather than silently misroute on a negative-weight graph). The floor
-        is a correctness property of this being an edge *weight*, not a
-        calibration fix -- it should hold regardless of how well-fit
-        congestion_model's curve is, since no amount of curve-fitting can
-        guarantee every real (delay, loss) sample stays within the model's
-        assumptions.
-
-        zeta*jitter (added 2026-08-19): a Breusch-Pagan test formally
-        confirmed delay_residual is heteroscedastic (its variance, not just
-        its mean, depends on utilization -- LM=21.231, p=0.0005, see
-        compliance_check.md) -- a dependence beta's mean-residual pricing
-        cannot remove by construction, no matter how the curve is refit.
-        Rather than keep chasing that out of delay_residual, zeta prices it
-        directly via NetworkState.get_delay_jitter_score(): a rolling-window
-        std of this link's own recent delay residuals, a real, observable
-        data-plane instability signal distinct from delta (which measures
-        control-plane reroute activity, not measurement volatility -- a link
-        can be jittery without ever having been rerouted around).
-        zeta=0.05 is a starting default matching delta/epsilon's magnitude,
-        not yet tuned by weight_search_comparison.py (still open, see
-        pending task notes) -- weights now sum to 1.10, not 1.0 (with eta).
-
-        eta*loss_jitter (added 2026-08-19, same day): same rationale as
-        zeta but for loss_residual -- a separate Breusch-Pagan test
-        confirmed it's heteroscedastic too (LM=14.965, p=0.0009 on a
-        LOESS-fitted residual, see compliance_check.md). Kept as its own
-        weight/tracker (NetworkState.get_loss_jitter_score(), a rolling-
-        window std of this link's recent loss residuals) rather than merged
-        into zeta -- delay and loss jitter are measured on different scales
-        via separate diagnostics, and this project found no real evidence
-        yet for how to normalize them into one combined signal.
-
-        Not a composite: a PCA merge of utilization/delay_residual/
-        loss_residual/churn into one term was tried and reverted the same
-        day (see compliance_check.md's "Composite congestion indicator"
-        section) -- PC1's loadings inverted the sign of both churn and
-        delay_residual's contribution (more churn / worse delay --> LOWER
-        cost), directly contradicting invariants this formula is built to
-        guarantee (test_churned_link_costs_more_than_an_identical_untouched_link,
-        test_link_with_anomalous_delay_beyond_prediction_costs_more). Kept
-        as 6 separate weighted terms instead.
+        Cost = alpha*utilization + beta*delay_residual + gamma*loss_residual
+             + delta*churn + epsilon*reliability + zeta*delay_jitter
+             + eta*loss_jitter, floored at MIN_EDGE_COST.
         """
         if link_stats is None:
             return 1.0
 
         utilization = float(link_stats.utilization)
 
+        # beta/gamma price residuals (measured minus utilization-predicted),
+        # not raw delay/loss: delay and loss are largely symptoms of
+        # utilization, so pricing their raw values alongside alpha double-
+        # counts the same congestion signal. Signed, not clamped at zero --
+        # a link doing better than utilization predicts is rewarded, not
+        # just never penalized.
         delay_residual_ms = (
             float(link_stats.delay_ms) - predicted_delay_ms(utilization)
             if link_stats.delay_ms is not None
@@ -253,8 +189,18 @@ class GraphBuilder:
             if link_stats.packet_loss is not None
             else 0.0
         )
+        # delta: how often this link has recently entered/left an installed
+        # path (NetworkState.get_link_churn_score(), updated by
+        # DecisionEngine._execute_reroute() on every real reroute) -- a
+        # link-level instability signal, complementary to the timing gates
+        # that control *when* a reroute is allowed.
         instability = self.network_state.get_link_churn_score(link_id, now=now)
         reliability_penalty = 0.0 if link_stats.status == "up" else 1.0
+        # zeta/eta: rolling-window volatility of this link's own delay/loss
+        # residuals. Prices heteroscedasticity (variance depends on
+        # utilization, not just the mean) directly, since beta/gamma's
+        # mean-residual pricing cannot remove that dependence no matter how
+        # congestion_model's curve is refit.
         jitter = self.network_state.get_delay_jitter_score(link_id, now=now)
         loss_jitter = self.network_state.get_loss_jitter_score(link_id, now=now)
 
@@ -268,6 +214,10 @@ class GraphBuilder:
             + self.weights.get("eta", 0.0) * loss_jitter
             + 0.001
         )
+        # Residuals can be negative, so the raw sum can go negative too --
+        # floor it: networkx's Dijkstra requires non-negative edge weights,
+        # and this floor must hold regardless of how well the residual
+        # curves are calibrated.
         return max(raw_cost, self.MIN_EDGE_COST)
 
     def _get_link_id(self, u: str, v: str) -> str:

@@ -1,36 +1,8 @@
 #!/usr/bin/env python3
 """
-Mininet Path Verification - push genuinely valid OpenFlow rules for a
-multi-hop path to a live Mininet/OVS network and confirm traffic actually
-follows it.
-
-Builds the project's actual full 40-switch GeantTopology (topology.py) and
-pushes rules for one real GraphBuilder-computed path across it.
-
-History: an earlier attempt at this full topology (with failMode=standalone)
-took 15+ minutes to bring up and drove system load past 10-15, matching the
-pattern that once forced a reboot. Root cause turned out to be a broadcast
-storm, not raw scale: GEANT is cyclic (61 edges over 40 nodes, well above the
-39 a loop-free tree would have), and standalone's implicit table-miss action
-("NORMAL") is a plain L2-learning fallback with no loop prevention -- on a
-cyclic topology, any unmatched/broadcast packet floods forever and
-self-multiplies (confirmed on a smaller 10-node cyclic subgraph: one
-switch's NORMAL rule hit 16 million packets in ~2 minutes). Switching to
-failMode=secure fixed it there (0% packet loss, ~8s total) -- secure drops
-unmatched traffic by default instead of flooding it, which also matches this
-project's actual design (no reliance on switch auto-learning, only explicit
-pushed rules). This is the same fix applied here, now at full scale.
-
-Note: FlowInstaller's build_flow_rules() output is NOT used here. Its
-"command" strings (e.g. "ovs-ofctl add-flow s13 priority=100,h13->h38,
-actions=output:s1") are a human-readable description for the offline
-simulation's dump_flows() display -- "h13->h38" is not a real match field,
-and "output:s1" needs a numeric port, not a switch name. Real port numbers
-only exist once Mininet is actually running, so the translation from
-path -> real rules is done here instead, using ports queried live from OVS.
-Switches are configured as protocols=OpenFlow13 (matching topology.py's
-GeantTopology), so ovs-ofctl must be told -O OpenFlow13 or the switch will
-reject the command.
+Mininet Path Verification - pushes genuinely valid OpenFlow rules for a
+real GraphBuilder-computed path across the project's full 40-switch
+GeantTopology and confirms traffic actually follows it.
 
 Run as: sudo python3 scripts/mininet_path_verification.py
 """
@@ -121,6 +93,10 @@ def main() -> None:
         src_host.cmd(f"arp -s {dst_ip} {dst_host.MAC()}")
         dst_host.cmd(f"arp -s {src_ip} {src_host.MAC()}")
 
+        # Rules are built here, not from FlowInstaller.build_flow_rules() -- its "command"
+        # strings are a human-readable description for the offline simulator's display
+        # (switch names instead of numeric ports), not valid ovs-ofctl input. Real port
+        # numbers only exist once Mininet is running, so they're queried live from OVS below.
         print(f"*** Installing real OpenFlow rules ({OF_VERSION}) along the path:")
         for index, switch_name in enumerate(path):
             switch = net.get(switch_name)

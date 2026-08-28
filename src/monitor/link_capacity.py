@@ -4,21 +4,16 @@ Link Capacity - resolve data/Geant2012.graphml's real per-link bandwidth
 labels into Mininet-usable Mbit/s values.
 
 39 of the 61 real GEANT edges carry a real `LinkLabel` attribute (e.g.
-"10 Gbps"), sourced from GEANT's own published network map (see
-compliance_check.md for the GraphML provenance metadata: DateObtained,
-Source=geant.net, Provenance=Primary) -- previously ignored entirely, with
-topology.py applying one flat bw= to every link regardless of this real,
-per-link variation.
+"10 Gbps"), sourced from GEANT's own published network map.
 
-Real values (155Mbps to 10Gbps) are not directly usable in Mininet on this
-test VM: a single iperf UDP stream already tops out around ~50-55Mbit/s here
-(results/independence_check/, results/correlation_check/), so a link
-literally configured at 10Gbps would never be reachable by any traffic this
-environment can actually generate. REAL_LINK_LABEL_TO_MBPS instead maps each
-real tier to a *scaled-down* Mininet value, preserving the real relative
-ordering (10Gbps links get more simulated bandwidth than 155Mbps links) while
-keeping every value within a range real generated traffic can actually
-saturate for future experiments.
+Real values (155Mbps to 10Gbps) aren't directly usable in Mininet on a
+typical test VM: a single iperf UDP stream tops out well under 1Gbit/s
+here, so a link configured at its literal 10Gbps would never be saturable
+by any traffic this environment can generate. REAL_LINK_LABEL_TO_MBPS maps
+each real tier to a scaled-down Mininet value instead, preserving the real
+relative ordering (10Gbps links get more simulated bandwidth than 155Mbps
+links) while keeping every value within a range real generated traffic can
+actually saturate.
 """
 from __future__ import annotations
 
@@ -55,10 +50,8 @@ _geant_graph_cache: Optional["object"] = None
 
 def _load_geant_graph():
     """Lazily load and cache GEANT's real topology graph (LinkLabel-annotated
-    edges) once per process. Moved here from experiments/simulation_common.py
-    2026-08-20 so production code (PathCost's per-edge offered-load
-    correction) can resolve real per-link capacity too, not just offline
-    experiments -- previously only wired up on the experiments side."""
+    edges) once per process, shared by both production code (PathCost's
+    per-edge offered-load correction) and offline experiments."""
     global _geant_graph_cache
     if _geant_graph_cache is None:
         import networkx as nx

@@ -1,41 +1,12 @@
 #!/usr/bin/env python3
 """
-Decision Churn Independence - test whether delta (link instability/churn) and
-epsilon (reliability) are independent of each other and of utilization, using
-the real DecisionEngine/GraphBuilder/NetworkState code -- offline, not
-Mininet.
-
-Why offline, unlike the u/delay/loss independence check (scripts/
-mininet_independence_check.py, results/independence_check/): delta and
-epsilon are properties of the *decision system's own bookkeeping*
-(NetworkState.record_link_churn(), called from
-DecisionEngine._execute_reroute() whenever a reroute actually happens), not
-physical network measurements. There is nothing a real switch could measure
-here that offline code driving the real DecisionEngine doesn't already
-exercise faithfully -- this mirrors the project's established split:
-decision-logic correctness is tested offline (experiments/), real physical
-relationships need Mininet (scripts/).
-
-Hypothesis under test (from reading _execute_reroute(), not yet confirmed
-empirically): a failing/flapping link is likely to show elevated churn AND
-elevated "recently down" reliability *simultaneously*, because
-_execute_reroute() records churn on every link added to or dropped from a
-path -- including the link that just failed and triggered an emergency
-reroute. If true, delta and epsilon may share the double-counting problem
-beta/gamma had before their 2026-08-12 residual fix.
-
-Method: build several distinct (src, dst) pairs (distinct first-hop links),
-drive each through a randomized sequence of congestion/failure/recovery/quiet
-events via the real ProposedDriver, sample (utilization, churn_score,
-reliability_down) after every event, then run the same independence toolkit
-used for u/delay/loss (experiments/independence_stats.py): Spearman +
-permutation test, distance correlation, VIF.
-
-Caveat, stated up front: samples within one pair's campaign track the same
-link across time, so they are not fully independent draws (churn is
-inherently about a link's own recent history) -- the global event order is
-randomized across all campaigns to at least avoid one campaign's samples
-being contiguous, but this is a real limitation, not eliminated.
+Decision Churn Independence - tests whether delta (link instability/churn)
+and epsilon (reliability) are independent of each other and of utilization,
+driving several (src, dst) pairs through randomized congestion/failure/
+recovery/quiet events via the real ProposedDriver, offline (not Mininet:
+delta/epsilon are properties of the decision system's own bookkeeping, not
+physical measurements), then running the same independence toolkit used for
+u/delay/loss (experiments/independence_stats.py).
 """
 from __future__ import annotations
 
@@ -73,9 +44,9 @@ def run(output_dir: Path = Path("results/decision_churn_independence")) -> Dict[
     state = build_network_state(output_dir, seed=RANDOM_SEED)
     builder = GraphBuilder(state)
     # Over-fetch and de-dupe by first link -- see joint_independence_matrix.py's
-    # matching comment (2026-08-19): campaigns sharing a real link corrupt
-    # each other's recorded (utilization, delay) pairing, since they all
-    # write to the same NetworkState in one globally-shuffled event order.
+    # matching comment: campaigns sharing a real link corrupt each other's
+    # recorded (utilization, delay) pairing, since they all write to the
+    # same NetworkState in one globally-shuffled event order.
     candidate_pairs = builder.select_test_pairs(limit=NUM_PAIRS * 8, min_candidate_paths=2)
 
     rng = random.Random(RANDOM_SEED)

@@ -4,22 +4,18 @@ Delay Jitter Tracker - rolling-window realized dispersion of a link's own
 recently observed delay *residual* (actual delay minus congestion_model's
 utilization-predicted delay), not raw delay.
 
-Added 2026-08-19 after a Breusch-Pagan test formally confirmed
-(LM=21.231, p=0.0005 -- see compliance_check.md) that this residual is
-heteroscedastic: its variance depends on utilization (roughly 2.7x higher
-at high vs mid utilization), a real effect neither the parametric delay
-curve nor a non-parametric LOESS refit can remove, since a residual formula
-prices a conditional *mean* and heteroscedasticity lives in the conditional
-*variance*. Rather than keep trying to "clean" that variance out of
-delay_residual, this tracks it directly as its own signal: a link whose
-delay has recently been bouncing around a lot is a real, observable form of
-instability, distinct from delta/churn (which measures control-plane
-reroute activity, not data-plane measurement volatility) -- a link can be
-jittery without ever having been rerouted around, and vice versa.
+This residual is heteroscedastic: its variance depends on utilization,
+which neither the parametric delay curve nor a non-parametric refit can
+remove, since a residual formula prices a conditional mean and
+heteroscedasticity lives in the conditional variance. This tracks that
+variance directly as its own signal: a link whose delay has recently been
+bouncing around a lot is a real, observable form of instability, distinct
+from delta/churn (control-plane reroute activity, not data-plane
+measurement volatility) -- a link can be jittery without ever having been
+rerouted around, and vice versa.
 
 Same rolling-window pattern as LinkChurnTracker (timestamped samples in a
-deque, evict anything older than the window on each read) -- not a new
-technique, applied to a new signal.
+deque, evict anything older than the window on each read).
 """
 from __future__ import annotations
 

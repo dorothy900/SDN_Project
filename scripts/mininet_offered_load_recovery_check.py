@@ -1,78 +1,10 @@
 #!/usr/bin/env python3
 """
-Mininet Offered-Load Recovery Risk Check - does the offered-load self-
-influence correction's caution actually pay off on a real network when
-background traffic genuinely worsens during an outage?
-
-Background (see compliance_check.md's "Revoking the offered-load
-correction" and the recovery-switchback fix sections, 2026-08-20): this
-session found the offered-load correction blocking a real, if modest,
-recovery-switchback improvement whenever the switchback candidate shares
-no edges with the current path (PRIMARY_PAIR). Disabling the correction
-closed that gap cleanly across the offline harness's 4-pair (later
-17-pair) robustness check. But the offline harness never updates a
-non-scripted edge's utilization after `build_network_state()`'s one-time
-stamp -- so "the switchback candidate is still fine" was never actually
-re-verified against a *changing* background there; it was true by
-construction, not by live measurement. This script tests the real case
-the offline harness structurally cannot: does disabling the correction
-become unsafe once background traffic genuinely increases on the
-recovering path *during* the outage?
-
-Design: the --src/--dst pair (PRIMARY_PAIR by default) fails its first
-hop, exactly like scripts/mininet_failure_recovery_demo.py, and is then
-restored. While restored, this script sweeps several REAL iperf
-background rates (--rates) injected directly between the hosts at two of
-original_path's OTHER (non-failed) nodes -- every GEANT node has its own
-host (topo.node_mapping), so this crosses the exact same switch-to-switch
-link the switchback candidate would use, not a proxy. Real utilization on
-that link is measured via StatisticsCollector (two ovs-ofctl dump-ports
-polls, real rate calculation) at each rate, and PathCost.compare_paths is
-evaluated on the real switchback decision TWICE per rate: once with
-offered_load_mbps=None (this session's current default) and once with it
-explicitly re-enabled -- looking for the rate, if any, where the two
-disagree (the correction changes the outcome).
-
-First run (2026-08-20, real result, single fixed rate=24Mbps): background
-alone already made the switchback look worse than staying, so both with
-and without the correction correctly rejected it -- an real, useful
-result (confirms background genuinely can shift enough to matter), but
-not the informative boundary case. Rewritten to sweep multiple lower
-rates in one session instead of asking for repeated manual re-runs.
-
-This has been reviewed for correctness (see compliance_check.md's
-"Real Mininet offered-load risk experiment" section for the 3 bugs found
-and fixed before the first run) and the first run above shows the overall
-mechanism genuinely works end to end on a real network. The rate sweep
-has been run once for real, on PRIMARY_PAIR only (see compliance_check.md's
-"Re-enabling the offered-load correction for recovery switchback" section)
--- confirmed the correction matters at 4-16 Mbps injected background.
-
-Parameterized 2026-08-24 (--src/--dst) so other pairs can be spot-checked
-against the offline 23-pair generalization check's per-pair predictions
-(compliance_check.md's "Failure/recovery node-pair generalization"
-section, experiments/failure_recovery_generalization.py) without editing
-this file -- e.g. a pair the offline harness found "full switchback
-agreement" (`12->25`) vs. one it found "delay wins but switchback
-declined" (`0->12`), to see whether that distinction holds on a real,
-changing network too. NEIGHBOR_A/NEIGHBOR_B (the background-injection
-edge) are already auto-derived from original_path for any pair -- no
-manual review needed there. This sweep itself has NOT yet been re-run for
-any pair other than the original PRIMARY_PAIR single-rate check above;
-treat any --src/--dst other than the default as unverified until you run
-it.
-
-Re-parameterized again 2026-08-24 (--pairs) to sweep several node pairs in
-one Mininet session -- this session's scenario design audit (finding: real
-hardware had only ever cross-validated 2 of the 23 offline-generalized
-pairs) asked for broader coverage without needing a fresh `sudo` session
-per pair. --pairs takes precedence over --src/--dst when given; --src/--dst
-remain as the single-pair shorthand for backward compatibility. Default
---pairs below spans the same tier1/tier2/tier3 background-data diversity
-failure_recovery_generalization.py's own pair selection uses (2->7 is
-PRIMARY_PAIR itself; 12->25 and 0->12 are the two pairs spot-checked
-before this change; 3->36 and 16->23 add a tier1 and a tier3 pair neither
-previously measured on real hardware).
+Mininet Offered-Load Recovery Risk Check - real-hardware test of whether the
+offered-load self-influence correction's caution actually pays off when
+background traffic genuinely worsens on the recovering path during an outage
+(the offline harness never updates a non-scripted edge's utilization after
+its one-time stamp, so it can't exercise this case at all).
 
 Run as: sudo python3 scripts/mininet_offered_load_recovery_check.py
     [--pairs 2:7,12:25,0:12,3:36,16:23] [--rates R1,R2,...]
@@ -113,6 +45,11 @@ OF_VERSION = "OpenFlow13"
 FLOW_MBPS = 24.0
 
 
+# Spans the tier1/tier2/tier3 background-data diversity failure_recovery_generalization.py's
+# own pair selection uses (2->7 is PRIMARY_PAIR; the other four add tier1/tier3 diversity).
+# Real result from the last full sweep: 2 of these 5 pairs (2->7 and 3->36) show the
+# correction actively changing the decision at real background rates in the 4-16 Mbps
+# range; the other 3 agree with or without it at every rate tested.
 DEFAULT_PAIRS = "2:7,12:25,0:12,3:36,16:23"
 
 
@@ -139,15 +76,11 @@ def resolve_pairs(args: argparse.Namespace) -> list:
         return [(args.src or PRIMARY_PAIR[0], args.dst or PRIMARY_PAIR[1])]
     return [tuple(p.split(":")) for p in DEFAULT_PAIRS.split(",")]
 
-# First run (2026-08-20, real result, PRIMARY_PAIR): a 24 Mbps injected
-# background flow already made new_cost worse than old_cost even WITHOUT
-# the offered-load correction (0.267531 vs 0.236009) -- both with and
-# without the correction correctly rejected the switchback, so that run
-# didn't land in the informative "boundary" zone (correction is the thing
-# that flips the decision). Sweeping several lower rates in one Mininet
-# session instead of one fixed rate finds where (if anywhere) that
-# boundary sits, without requiring the user to manually re-run this
-# multiple times. Default sweep below (--rates to override per pair).
+# A single fixed background rate can easily land outside the informative
+# "boundary" zone (the rate, if any, where the correction actually flips
+# the decision) -- sweeping several rates in one Mininet session finds
+# where that boundary sits, if it exists, without requiring manual re-runs.
+# Default sweep below (--rates to override per pair).
 
 # Background-traffic window per rate: how long the injected iperf flow runs
 # before link stats are sampled (must be long enough for a real, stable
@@ -224,11 +157,9 @@ def run_pair(net, topo, src_node: str, dst_node: str, background_rates_mbps: lis
     One pair's full failure -> restore -> background-rate-sweep check,
     against an already-running `net`. Returns whether a boundary (a rate
     where the offered-load correction flips the switchback decision) was
-    found for this pair. Split out of main() 2026-08-24 so --pairs can run
-    several pairs against a single `net.start()`/`net.stop()` -- Mininet
-    startup/teardown is the dominant per-run cost, so this is what makes
-    sweeping 5 pairs in one sudo session practical instead of asking for 5
-    separate manual re-runs.
+    found for this pair. Called once per --pairs entry against a single
+    `net.start()`/`net.stop()`, since Mininet startup/teardown is the
+    dominant per-run cost.
     """
     output_dir = PROJECT_ROOT / "results" / "mininet_offered_load_recovery_check" / f"{src_node}_{dst_node}"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -236,18 +167,10 @@ def run_pair(net, topo, src_node: str, dst_node: str, background_rates_mbps: lis
 
     print(f"\n{'='*70}\n*** PAIR {src_node} -> {dst_node}\n{'='*70}")
 
-    # Seed every edge with the same real-data-calibrated baseline the
-    # offline harness uses (experiments/simulation_common.py's
-    # build_network_state -- SNDlib-grounded where matched, the fixed
-    # fallback range elsewhere), NOT a bare NetworkState() -- a bare one
-    # leaves every edge with no stats at all except whichever single
-    # edge this script measures for real, so PathCost.calculate_path_
-    # cost's "no data" flat 1.0-per-edge fallback would dominate the
-    # comparison by hop count instead of by the real background-load
-    # signal this script exists to test. Only the specific background
-    # edge measured below gets its calibrated value overwritten with a
-    # real, freshly-measured one -- everything else stays exactly the
-    # baseline the rest of this session's results are grounded in.
+    # Seed every edge with the same calibrated baseline the offline harness uses, not a
+    # bare NetworkState() -- a bare one leaves every edge with no stats except the one this
+    # script measures, so the "no data" flat-cost fallback would dominate by hop count
+    # instead of by the real background-load signal this script exists to test.
     state = build_network_state(output_dir, seed=1)
     builder = GraphBuilder(state)
     collector = StatisticsCollector(output_dir=output_dir)

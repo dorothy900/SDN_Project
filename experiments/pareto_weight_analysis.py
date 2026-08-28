@@ -1,42 +1,11 @@
 #!/usr/bin/env python3
 """
-Pareto Weight Analysis - "path 2" of the weight-tuning arc in
-compliance_check.md's "Which optimizer actually fits this formula" /
-"A method actually designed for this structure" sections.
-
-Background: DIRECT's own headline recommendation (found by
-weight_search_comparison.py) turned out to be the search space's exact
-geometric center (all 6 searched weights = 0.5) -- not a meaningfully
-refined result, just DIRECT's mandatory first evaluation happening to
-already sit inside the benchmark's large (68% of the space) zero-regret
-region. A real-scenario check with the production GraphBuilder then found
-that vector prefers a heavily-congested-but-stable link over a
-lightly-loaded-but-recently-churned one -- the opposite of what production
-weights (and, it turns out, the benchmark's own equal-weight "ground
-truth") were built to encourage.
-
-Tried "path 1" first (unit normalization -- rescale delay_residual_ms and
-loss_residual onto comparable [0,1]-ish ranges before weighting, since the
-raw formula's beta/gamma terms use physically different units than
-alpha/delta/zeta/eta). Checked directly: it made no difference for the
-utilization-vs-churn conflict specifically, because utilization and
-churn_score are *already* both properly range-normalized to [0,1] (one
-because it's a physical fraction of link capacity, the other via
-LinkChurnTracker's own saturation_count cap) -- there's no unit mismatch
-to fix there. The real disagreement is a relative-*importance* judgment
-(is a churn event worth 0.4 units of utilization or not?), which no amount
-of rescaling can resolve, since churn_score's saturation_count=5 anchor is
-itself an unvalidated default, not a real measured "equivalent severity."
-
-This module is "path 2": rather than assert one arbitrary weight vector as
-correct (which is what both the original CURRENT_DEFAULTS and DIRECT's raw
-recommendation implicitly do), report the *Pareto frontier* -- for a set of
-genuine trade-off scenarios, whether one candidate path actually dominates
-the other on every raw dimension (in which case there's no real conflict
-and no weight choice matters), or whether they're mutually non-dominated
-(a real trade-off), and for the latter, sweep the weight simplex to
-characterize *which weight regime prefers which path* and where the
-boundary sits -- instead of forcing a single number.
+Pareto Weight Analysis - reports the Pareto frontier for genuine trade-off
+scenarios (e.g. utilization vs churn) instead of asserting a single weight
+vector as correct: for each scenario, checks whether one candidate path
+actually dominates the other on every raw dimension, and where it doesn't,
+sweeps the weight simplex to characterize which weight regime prefers
+which path and where the boundary sits.
 
 Run as: python3 -m experiments.pareto_weight_analysis
 """
@@ -119,8 +88,8 @@ def weighted_cost(raw: Dict[str, float], weights: Dict[str, float]) -> float:
 
 def build_churn_vs_congestion(seed: int, u_light: float, churn_events: int, u_heavy: float) -> Tuple[NetworkState, float]:
     """"churny_light": low utilization, recently churned. "congested_clean":
-    high utilization, no churn history. Mirrors the real-scenario check in
-    compliance_check.md that first found this trade-off."""
+    high utilization, no churn history -- the real-scenario trade-off that
+    motivated this module (see its docstring)."""
     state = NetworkState()
     _seed(state, "congested_clean", u=u_heavy)
     _seed(state, "churny_light", u=u_light)

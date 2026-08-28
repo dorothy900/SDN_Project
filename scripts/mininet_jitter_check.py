@@ -6,21 +6,19 @@ offline hybrid_congestion_churn_matrix.py experiment couldn't: are these two
 genuinely independent, or does more delay dispersion really come with more
 loss dispersion?
 
-Why a new real experiment was needed (2026-08-19): the offline hybrid
-experiment injected delay/loss via a nearest-neighbor lookup into the SAME
-real Mininet sample every time, so within any rolling window, delay_jitter
-and loss_jitter were mechanically driven by the same "which real samples
-got picked" latent factor -- not real, independently-varying measurements.
-That run also had a small effective n (28 usable rows, mostly repeated
-values -- the rolling window often didn't change between closely-spaced
-reads). Spearman(delay_jitter, loss_jitter) came back 1.000, too clean to
-trust given both problems.
+Why a real experiment is needed here: the offline hybrid_congestion_churn_
+matrix.py experiment injects delay/loss via a nearest-neighbor lookup into
+the same real Mininet sample every time, so within any rolling window,
+delay_jitter and loss_jitter are mechanically driven by the same "which
+real sample got picked" latent factor, not real, independently-varying
+measurements -- an offline Spearman(delay_jitter, loss_jitter) of 1.000 is
+too clean to trust given that.
 
-Fix: feed genuinely separate real measurements (real ping-based delay, real
-tc-qdisc-based loss -- see mininet_loss_saturation_check.py for why qdisc
-counters, not OVS's, are used for loss) through NetworkState.update_link_statistics()
-in real time on a real, saturating GEANT link (s5-s14, same one used
-throughout this session), using the exact same DelayJitterTracker/
+This script feeds genuinely separate real measurements (real ping-based
+delay, real tc-qdisc-based loss -- see mininet_loss_saturation_check.py
+for why qdisc counters, not OVS's, are used for loss) through
+NetworkState.update_link_statistics() in real time on a real, saturating
+GEANT link (s5-s14), using the exact same DelayJitterTracker/
 LossJitterTracker production code path (default window_seconds=60,
 saturation_ms=150/saturation=0.20) -- not a synthetic clock, not a shared
 lookup. Randomized request-rate order and trial count high enough that

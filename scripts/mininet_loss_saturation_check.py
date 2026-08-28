@@ -1,40 +1,33 @@
 #!/usr/bin/env python3
 """
-Mininet Loss Saturation Check - dedicated fix for the utilization-loss
-measurement that failed twice (results/correlation_check/,
-results/independence_check/): loss stayed exactly 0.0 across 70 combined
-real samples, even at requested rates deliberately exceeding a 100Mbit link
-cap. Root cause established by that point: achieved utilization never
-exceeded ~50-55% regardless of requested rate, on multiple links -- the test
-VM's own iperf UDP generation throughput is the real ceiling, not link
-shaping (which is a hard tc/htb limit and should be trivial to exceed by
-just requesting more).
+Mininet Loss Saturation Check - measures real, nonzero packet loss under
+genuine link saturation, addressing two obstacles ordinary iperf-based
+measurement on this VM hits:
 
-Fix: stop fighting the generation ceiling, sidestep it. Test against a real
-GEANT link whose *actual* configured capacity is already below what this VM
-can generate. data/Geant2012.graphml has two real "155 Mbps" edges (the
-project's smallest labeled tier); topology.py scales that to 20Mbit
-(src/monitor/link_capacity.py) -- comfortably below the ~50-55Mbit/s ceiling
-already observed twice, so genuine saturation (and therefore observable
-loss) no longer depends on out-generating a VM's own packet-generation
-throughput.
+1. Generation ceiling: achieved utilization on a flat-100Mbit link never
+   exceeds ~50-55% regardless of requested rate, because the test VM's own
+   iperf UDP generation throughput -- not link shaping -- is the real
+   ceiling. Fix: test against a real GEANT link whose *actual* configured
+   capacity is already below what this VM can generate.
+   data/Geant2012.graphml has two real "155 Mbps" edges (the project's
+   smallest labeled tier); topology.py scales that to 20Mbit
+   (src/monitor/link_capacity.py), comfortably below the generation
+   ceiling, so genuine saturation no longer depends on out-generating the
+   VM's own packet-generation throughput.
 
-Also feeds into pending task: once real loss samples exist, fit
-congestion_loss_bump's onset/scale to them the same way congestion_model's
+2. Accounting layer: OVS's own port drop= counter does not see tc-netem/
+   htb shaping drops at all -- OVS's datapath counter and the kernel's
+   queueing discipline underneath it are two separate accounting layers,
+   not two views of the same counter. This script reads
+   src/monitor/qdisc_stats.py's real tc counters directly instead of
+   StatisticsCollector.calculate_loss_rate() (which remains correct for
+   what it measures -- OVS-datapath-level drops -- just structurally
+   blind to shaping-induced loss, this project's own dominant loss
+   mechanism under congestion).
+
+Feeds congestion_loss_bump's onset/scale calibration: once real loss
+samples exist here, they can be fit the same way congestion_model's
 scale_ms was fit to real delay samples.
-
-Update, same day: sidestepping the generation ceiling worked (achieved
-utilization reached 0.89), but loss *still* read 0.0 across all 30 samples.
-A live diagnostic (tc -s qdisc show vs. ovs-ofctl dump-ports on the same
-interface, same moment) found the real reason: OVS's own port drop= counter
-does not see tc-netem/htb shaping drops at all -- confirmed 29104 real
-dropped packets in `tc`'s own counters while OVS reported drop=0 for that
-same interface. These are two separate accounting layers, not two views of
-the same counter. Switched to src/monitor/qdisc_stats.py, which reads tc's
-own counters directly, instead of StatisticsCollector.calculate_loss_rate()
-(which remains correct for what it measures -- OVS-datapath-level drops --
-just structurally blind to shaping-induced loss, which is exactly this
-project's own dominant loss mechanism under congestion).
 
 Run as: sudo python3 scripts/mininet_loss_saturation_check.py
 """

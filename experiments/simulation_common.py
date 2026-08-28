@@ -39,22 +39,19 @@ SAMPLE_INTERVAL_S = 2.0  # matches config/topology.yaml monitoring.interval_seco
 LINK_CAPACITY_MBPS = 100.0  # flat fallback, used only when there's nothing real to
                              # look up: an edge with no published GEANT LinkLabel
                              # (resolve_link_capacity_mbps's own fallback), or a
-                             # None/degenerate path (resolve_path_capacity_mbps).
-                             # compute_flow_metrics() used to hardcode this for
-                             # every path regardless of real capacity -- fixed
-                             # 2026-08-19 to use resolve_path_capacity_mbps()
-                             # (the real per-link bottleneck) instead; this constant
-                             # remains only as that function's own last-resort default.
+                             # None/degenerate path (resolve_path_capacity_mbps,
+                             # which uses the real per-link bottleneck instead
+                             # of this flat value whenever real data exists).
 BASE_TIMESTAMP = datetime(2026, 8, 24, 12, 0, 0)
 
 
 def resolve_link_capacity_mbps(link_id_str: str) -> float:
     """
     Real per-link capacity (Mbps) for one GEANT edge. Thin wrapper over
-    src.monitor.link_capacity's own resolver (moved there 2026-08-20 so
-    PathCost's per-edge offered-load correction can use the same real
-    capacity data production-side, not just this offline harness) --
-    kept here only to pin this module's own LINK_CAPACITY_MBPS default.
+    src.monitor.link_capacity's own resolver, so both PathCost's per-edge
+    offered-load correction (production) and this offline harness resolve
+    real capacity data the same way -- kept here only to pin this module's
+    own LINK_CAPACITY_MBPS default.
     """
     from src.monitor.link_capacity import resolve_link_capacity_mbps as _resolve
 
@@ -99,8 +96,7 @@ def build_network_state(output_dir: Path, seed: int = 0) -> NetworkState:
 
     Background link baselines: a three-tier fallback, real data first.
       1. resolve_edge_demand_baseline() -- real SNDlib GEANT traffic-demand
-         data, mapped by country identity (see sndlib_demand.py's module
-         docstring, added 2026-08-20).
+         data, mapped by country identity (see sndlib_demand.py).
       2. resolve_edge_diversity_baseline() -- SNDlib's synthetic "nobel-eu"
          reference network, consulted only when tier 1 doesn't cover an
          edge. Explicitly NOT a realism claim (see sndlib_demand.py's tier-2
@@ -110,17 +106,12 @@ def build_network_state(output_dir: Path, seed: int = 0) -> NetworkState:
          is never overridden or blended with a synthetic one.
       3. Fallback: uniform random draw across [FALLBACK_LOW, FALLBACK_HIGH]
          (the same range tiers 1/2 use), for whatever neither tier above
-         covers -- fixed 2026-08-20, replacing the old narrow
-         `base_utilization + 0.01*(index % 6)` formula (~0.05-wide band).
-         That narrow band created a real, systematic (not random) bias:
-         real demand-calibrated edges between busy hub countries
-         legitimately read higher than the old band's ceiling, so any
-         candidate path touching even one uncovered node looked
-         artificially cheap by comparison, deterministically (verified
-         across 20 seeds, same biased path chosen every time). See
-         sndlib_demand.py's FALLBACK_LOW/HIGH docstring and
-         compliance_check.md's "Fallback baseline range widened to remove
-         a systematic bias" section.
+         covers. A narrower fallback band would create a systematic (not
+         random) bias: real demand-calibrated edges between busy hub
+         countries legitimately read higher than a narrow band's ceiling,
+         so any candidate path touching even one uncovered node would look
+         artificially cheap by comparison, deterministically. See
+         sndlib_demand.py's FALLBACK_LOW/HIGH docstring.
     """
     rng = random.Random(seed)
     state = NetworkState(output_dir=output_dir)
@@ -173,15 +164,15 @@ def set_link_condition(
     scenario. Pass delay_bump_ms/loss_bump explicitly to bypass this and set
     an exact value instead (e.g. injecting an isolated, non-congestion event).
 
-    delay_ms_override/loss_override (added 2026-08-19): set delay/loss to
-    these *exact* values, bypassing both the formula and the bump-over-old-
-    value logic entirely. For injecting real Mininet-measured (delay, loss)
-    samples instead of congestion_model.py's formula -- the formula produces
-    delay_residual/loss_residual that are ~0 by construction (see
-    compliance_check.md's PCA section), which is fine for testing the
-    formula's own internal consistency but means any residual computed from
-    it carries no real variance to analyze. delay_bump_ms/loss_bump still
-    take priority if both are given by mistake (checked first, unchanged).
+    delay_ms_override/loss_override: set delay/loss to these *exact*
+    values, bypassing both the formula and the bump-over-old-value logic
+    entirely. For injecting real Mininet-measured (delay, loss) samples
+    instead of congestion_model.py's formula -- the formula produces
+    delay_residual/loss_residual that are ~0 by construction, which is
+    fine for testing the formula's own internal consistency but means any
+    residual computed from it carries no real variance to analyze.
+    delay_bump_ms/loss_bump still take priority if both are given by
+    mistake (checked first, unchanged).
     """
     old = state.get_link_stats(link_id_str)
     resolved_utilization = utilization if utilization is not None else (float(old.utilization) if old else 0.2)
@@ -366,24 +357,23 @@ class ProposedDriver:
     ):
         self.state = state
         self.src, self.dst = src, dst
-        # This flow's traffic class (added 2026-08-20) -- forwarded to
-        # DecisionEngine.evaluate_pair so config/policies.yaml's per-class
-        # policy (severity-scaled skip-persistence for high-priority
-        # classes) applies here too, not just in priority_policy.py's own
-        # evaluate_service_congestion path. None (default) preserves prior
-        # behavior exactly.
+        # This flow's traffic class -- forwarded to DecisionEngine.evaluate_pair
+        # so config/policies.yaml's per-class policy (severity-scaled
+        # skip-persistence for high-priority classes) applies here too, not
+        # just in priority_policy.py's own evaluate_service_congestion path.
+        # None (default) preserves prior behavior exactly.
         self.service_type = service_type
-        # This flow's own raw bandwidth demand in Mbps -- fixed 2026-08-12
-        # ("self-influence / offered-load accounting"), reworked 2026-08-20
-        # to carry the flow's raw Mbps instead of a single precomputed
-        # utilization fraction, so PathCost can convert it per-edge using
-        # each edge's own real capacity (a uniform fraction based on one
-        # link's capacity systematically mis-priced other edges -- see
-        # PathCost.calculate_path_cost's docstring). Applied to candidate
-        # paths only when comparing reroute options, and only to edges the
-        # candidate doesn't already share with the current path, since the
-        # current path already reflects this flow's real contribution on
-        # those. None (default) preserves prior behavior exactly.
+        # This flow's own raw bandwidth demand in Mbps -- self-influence /
+        # offered-load accounting. Carries the flow's raw Mbps rather than a
+        # single precomputed utilization fraction, so PathCost can convert
+        # it per-edge using each edge's own real capacity (a uniform
+        # fraction based on one link's capacity would systematically
+        # misprice other edges -- see PathCost.calculate_path_cost's
+        # docstring). Applied to candidate paths only when comparing
+        # reroute options, and only to edges the candidate doesn't already
+        # share with the current path, since the current path already
+        # reflects this flow's real contribution on those. None (default)
+        # preserves prior behavior exactly.
         self.offered_load_mbps = offered_load_mbps
         self.engine = DecisionEngine(state, config_path=config_path)
         if persistence_required_samples is not None:
@@ -448,8 +438,8 @@ class ProposedDriver:
             else:
                 # Utilization has cleared the threshold entirely; let hysteresis
                 # state reset so a future crossing is treated as a fresh entry,
-                # and leak the persistence window by one unit too (2026-08-20 --
-                # see DecisionEngine.leak_persistence's docstring: a full clear
+                # and leak the persistence window by one unit too -- see
+                # DecisionEngine.leak_persistence's docstring: a full clear
                 # here would erase standing evidence of a chronic-but-brief
                 # problem the instant it dips below threshold even once; a
                 # 1:1 leak still forgives an isolated spike within 1-2 clean
@@ -509,11 +499,10 @@ def make_drivers(
     which is the property Stage 6 actually exercises (its own hop-count
     tie-break behavior is already validated independently in Stage 3).
 
-    offered_load_mbps: opt-in fix for the "self-influence /
-    offered-load accounting" limitation (documented 2026-08-11, fixed
-    2026-08-12) -- forwarded to ProposedDriver only (static/dynamic don't go
-    through PathCost.compare_paths' asymmetric old/new costing). None
-    (default) preserves every existing caller's behavior exactly.
+    offered_load_mbps: opt-in self-influence / offered-load accounting --
+    forwarded to ProposedDriver only (static/dynamic don't go through
+    PathCost.compare_paths' asymmetric old/new costing). None (default)
+    preserves every existing caller's behavior exactly.
     """
     initial_path = GraphBuilder(state).get_candidate_paths(src, dst, max_paths=1)
     initial_path = initial_path[0] if initial_path else StaticShortestPath(state.get_active_graph()).compute_path(src, dst)

@@ -122,11 +122,7 @@ class ThresholdDetector:
         values: Sequence[float],
         metric: str = "utilization",
     ) -> List[Dict[str, object]]:
-        """
-        Report the exact samples where a metric crosses into or out of violation.
-
-        This is used by the Week 4 Day 1 unit-style validation.
-        """
+        """Report the exact samples where a metric crosses into or out of violation."""
         if metric not in self.thresholds:
             raise ValueError("Unsupported metric: %s" % metric)
 

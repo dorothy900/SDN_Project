@@ -62,15 +62,12 @@ def run(output_dir: Path = Path("results/joint_independence_matrix")) -> Dict[st
     builder = GraphBuilder(state)
     # Over-fetch candidates -- select_test_pairs alone doesn't know about
     # "first link" disjointness, so some of the first NUM_PAIRS pairs it
-    # returns can share a real link (found 2026-08-19: 4 of the default 6
-    # pairs all had "0-4" as their first hop). Since every campaign below
-    # writes to the SAME NetworkState and events across ALL campaigns are
-    # interleaved in one shuffled global order, two campaigns sharing a
-    # link corrupt each other's (utilization, delay) pairing -- whichever
-    # campaign's set_link_condition() ran most recently silently overwrites
-    # what the other just set, before either gets read back. Confirmed live:
-    # this was why a PCA fit on this data gave a near-zero loss_residual
-    # loading -- not a real finding, cross-campaign noise.
+    # returns can share a real link. Since every campaign below writes to
+    # the SAME NetworkState and events across ALL campaigns are interleaved
+    # in one shuffled global order, two campaigns sharing a link corrupt
+    # each other's (utilization, delay) pairing -- whichever campaign's
+    # set_link_condition() ran most recently silently overwrites what the
+    # other just set, before either gets read back.
     candidate_pairs = builder.select_test_pairs(limit=NUM_PAIRS * 8, min_candidate_paths=2)
 
     rng = random.Random(RANDOM_SEED)

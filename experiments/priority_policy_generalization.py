@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Priority-Policy Node-Pair Generalization - was this scenario's claim
-("VoIP/Video, marked reroute_immediate in config/policies.yaml, reroute
-faster than Web/File Transfer under the same congestion") ever verified
-beyond PRIMARY_PAIR? No -- same gap already closed for the other three
-scenarios this session (see compliance_check.md, 2026-08-24).
+Priority-Policy Node-Pair Generalization - generalizes priority_policy.py's
+claim ("VoIP/Video, marked reroute_immediate in config/policies.yaml,
+reroute faster than Web/File Transfer under the same congestion") from a
+single monitored pair (PRIMARY_PAIR) to the same 23-pair sample used
+across the other generalized scenarios.
 
 Reuses the identical 23-pair sample (`labeled_pairs_23`) drawn for the
 failure/recovery check.

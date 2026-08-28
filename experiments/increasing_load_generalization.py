@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """
-Increasing-Load Node-Pair Generalization - was this scenario's proposed-vs-
-baseline comparison ever verified beyond PRIMARY_PAIR? No (see
-compliance_check.md's "Failure/recovery node-pair generalization" section,
-2026-08-24, which found the same gap for congestion.py/failure_recovery.py
-before those got 17/23-pair checks). This closes the gap for
-increasing_load.py.
+Increasing-Load Node-Pair Generalization - generalizes increasing_load.py's
+proposed-vs-baseline comparison from a single monitored pair (PRIMARY_PAIR)
+to the same 23-pair sample used across the other generalized scenarios.
 
 Reuses the identical 23-pair sample (`labeled_pairs_23`) already drawn for
 the failure/recovery check, so results are directly comparable pair-for-

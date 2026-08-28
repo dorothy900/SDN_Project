@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Topology State - Maintain topology information
-Week 2 Day 4: Detect link up/down and update internal graph
+Topology State - maintain topology information, detecting link up/down
+transitions and updating the internal graph.
 """
 from pathlib import Path
 from typing import Dict, Set, Optional, Tuple

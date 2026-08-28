@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Run Decision Engine Validation - Week 4 automation.
+Run Decision Engine Validation - exercise threshold detection, persistence,
+path cost, minimum-gain gating, decision logging, and the change budget,
+and persist the resulting deliverables.
 """
 
 from __future__ import annotations
@@ -29,7 +31,22 @@ from src.routing.graph_builder import GraphBuilder
 
 
 class DecisionEngineValidation:
-    """Run Week 4 Day 1-6 checks and persist Stage 4 deliverables."""
+    """
+    Run decision-engine validation checks and persist Stage 4 deliverables.
+
+    Day 2 (_run_persistence_check) exercises PersistenceChecker.evaluate_sample()
+    directly, in isolation, to demonstrate its own strict-consecutive contract
+    (a short spike is rejected, sustained overload is accepted after
+    required_samples) -- that contract is real and still correct, but it is
+    not how DecisionEngine's real reroute path (evaluate_pair/
+    evaluate_service_congestion, exercised correctly by Day 5 below) composes
+    persistence today: that path calls leak_persistence()/PersistenceChecker.
+    leak_window() on its below-threshold branch instead, a 1:1 leak rather
+    than evaluate_sample()'s own full clear_window() -- see
+    decision_engine.py's leak_persistence() docstring. Read Day 2's
+    output as "PersistenceChecker's own unit-level behavior," not as a
+    description of the composed system.
+    """
 
     def __init__(self, output_dir: Optional[Path] = None):
         self.output_dir = output_dir or Path("results/decision_engine")
@@ -264,15 +281,14 @@ class DecisionEngineValidation:
         if below is None:
             engine.logger.log_no_action("Normal traffic remains below threshold")
 
-        # Sustained congestion with insufficient gain. utilization=0.265 (not
-        # 0.25) since 2026-08-20's churn-adaptive minimum-improvement change:
-        # this link has no churn history, so the floor (not the ceiling)
-        # threshold applies -- 0.265 gives a real but still-too-small ~3.6%
-        # relative reduction, below the 5% floor either way, so this still
-        # correctly demonstrates a rejected "no_improvement" decision (0.25
-        # gave ~9%, which clears the new floor and would be correctly
-        # *accepted* now -- see compliance_check.md's "Churn-adaptive
-        # minimum-improvement threshold" section).
+        # Sustained congestion with insufficient gain. utilization=0.265, not
+        # 0.25: this link has no churn history, so the churn-adaptive
+        # minimum-improvement floor (not the ceiling) applies -- 0.265 gives
+        # a real but still-too-small ~3.6% relative reduction, below the 5%
+        # floor either way, so this still correctly demonstrates a rejected
+        # "no_improvement" decision (0.25 would give ~9%, which clears the
+        # floor and would be accepted instead -- see DecisionEngine.
+        # _churn_adaptive_min_improvement's docstring).
         self._set_path_metrics(state, current_path, utilization=0.83, delay_ms=predicted_delay_ms(0.83), packet_loss=predicted_loss(0.83))
         self._set_path_metrics(state, low_gain_path, utilization=0.265, delay_ms=predicted_delay_ms(0.265), packet_loss=predicted_loss(0.265))
         low_gain_violation = ThresholdViolation(

@@ -2,14 +2,12 @@
 """
 Loss Jitter Tracker - rolling-window realized dispersion of a link's own
 recently observed loss *residual* (actual loss minus congestion_model's
-utilization-predicted loss), mirroring DelayJitterTracker for the same
-reason: a Breusch-Pagan test confirmed loss_residual is heteroscedastic too
-(LM=14.965, p=0.0009 on a LOESS-fitted residual -- see compliance_check.md,
-2026-08-19), a dependence residual-pricing can't remove by construction.
-Kept as its own tracker/weight rather than merged into DelayJitterTracker's
-zeta, since delay and loss jitter are measured on different scales and
-found via separate diagnostics -- forcing them into one signal would need
-an extra normalization decision this project has no real evidence for yet.
+utilization-predicted loss), mirroring DelayJitterTracker: loss_residual is
+heteroscedastic too, a dependence residual-pricing can't remove by
+construction. Kept as its own tracker/weight rather than merged into
+DelayJitterTracker's zeta, since delay and loss jitter are measured on
+different scales -- forcing them into one signal would need an extra
+normalization decision this project has no real evidence for yet.
 """
 from __future__ import annotations
 

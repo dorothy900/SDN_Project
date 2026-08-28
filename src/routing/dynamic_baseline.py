@@ -108,7 +108,7 @@ class DynamicBaseline:
         return event
 
     def save_events(self, output_path: Path) -> None:
-        """Persist reroute decisions for the Week 3 Day 4 deliverable."""
+        """Persist reroute decisions to CSV."""
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(

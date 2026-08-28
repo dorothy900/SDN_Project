@@ -47,28 +47,27 @@ class PathCost:
         on a synthetic one, and a synthetic-clock-recorded churn event will
         never be seen (see NetworkState.get_link_churn_score's docstring).
 
-        offered_load_mbps (fixed 2026-08-12 as a single precomputed
-        utilization fraction, "self-influence / offered-load accounting";
-        reworked 2026-08-20 to take the flow's raw Mbps demand instead):
-        if given, converted to a utilization bump *per edge* using that
-        edge's own real capacity (resolve_link_capacity_mbps) and added to
-        the edge's measured utilization before pricing -- models what this
-        path would cost if a flow demanding this much bandwidth were routed
-        across it. A single capacity-agnostic fraction previously
-        mispriced any edge whose real capacity differed from whichever
-        link the fraction happened to be computed against (found
-        2026-08-20, multi-pair robustness check). Pass this for a
-        *candidate* path that doesn't carry the flow yet; leave it None
-        (default) for a path that already reflects the flow's real current
-        state. exclude_edges: edges to leave unbumped even when
-        offered_load_mbps is given -- for edges the candidate already
-        shares with the *current* path, which already carries this flow's
-        real contribution there today; bumping them again would double-
-        count it (found alongside the capacity issue, same root check).
+        offered_load_mbps: this flow's raw bandwidth demand -- self-
+        influence / offered-load accounting. If given, converted to a
+        utilization bump *per edge* using that edge's own real capacity
+        (resolve_link_capacity_mbps) and added to the edge's measured
+        utilization before pricing: models what this path would cost if a
+        flow demanding this much bandwidth were actually routed across it.
+        Bumping by a single capacity-agnostic fraction would misprice any
+        edge whose real capacity differs from whichever link the fraction
+        was computed against, so the bump is resolved per edge instead.
+        Pass this for a *candidate* path that doesn't carry the flow yet;
+        leave it None (default) for a path that already reflects the
+        flow's real current state.
+
+        exclude_edges: edges to leave unbumped even when offered_load_mbps
+        is given -- for edges the candidate already shares with the
+        *current* path, whose measured stats already include this flow's
+        real contribution there; bumping them again would double-count it.
         See compare_paths()/is_improvement(), which apply both
-        asymmetrically (new_path only) for exactly this reason -- this
-        method itself is symmetric and just does what it's told for
-        whichever path it's given.
+        asymmetrically (new_path only) for this reason -- this method
+        itself is symmetric and just does what it's told for whichever
+        path it's given.
         """
         if not path or len(path) < 2:
             return float('inf')

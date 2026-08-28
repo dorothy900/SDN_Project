@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Link Monitor - Monitor individual links
-Week 2 Day 4: Detect link up/down events
+Link Monitor - monitor individual links and detect up/down events.
 """
 import csv
 from datetime import datetime
@@ -120,10 +119,7 @@ class LinkMonitor:
         return self.link_events[-count:]
     
     def save_events_to_csv(self, filename: str = "link_status_events.csv") -> None:
-        """
-        Save link status change events to CSV.
-        Week 2 Day 4 output.
-        """
+        """Save link status change events to CSV."""
         filepath = self.output_dir / filename
         
         with filepath.open("w", newline="", encoding="utf-8") as f:

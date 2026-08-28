@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Run Network State Validation - Week 2 Day 1-6 automation.
+Run Network State Validation - exercise link mapping, statistics
+collection, and network-state aggregation end to end, and persist the
+resulting deliverables.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from src.monitor.statistics_collector import StatisticsCollector
 
 
 class NetworkStateValidation:
-    """Run Week 2 Day 1-6 checks and persist Stage 2 deliverables."""
+    """Run network-state validation checks and persist Stage 2 deliverables."""
 
     def __init__(self, output_dir: Optional[Path] = None):
         self.output_dir = output_dir or Path("results/network_state")

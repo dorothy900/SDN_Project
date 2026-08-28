@@ -1,43 +1,19 @@
 #!/usr/bin/env python3
 """
-SNDlib Demand Mapping - real GEANT traffic-demand data, mapped onto our
-Topology Zoo Geant2012.graphml nodes by country identity, to calibrate
-offline scenario experiments' background link baselines.
+SNDlib Demand Mapping - real GEANT traffic-demand data, mapped onto this
+project's Topology Zoo Geant2012.graphml nodes by country identity, to
+calibrate offline scenario experiments' background link baselines (in
+place of simulation_common.py's prior arbitrary seeding formula).
 
-Background: `simulation_common.py::build_network_state()`'s ~60 non-hotspot
-"background" links were seeded with a purely arbitrary formula
-(`0.22 + 0.01*(link_index % 6) + small jitter`) -- no real data behind it,
-just a fixed pattern by iteration order. User asked whether this could be
-replaced with something grounded in real traffic data instead ("SNDlib" --
-the Survivable Network Design Library, sndlib.zib.de). Checked directly:
-
-- `data/sndlib_geant.xml` (fetched from the SNDlib network-data mirror at
-  https://github.com/arekolek/MaxIST/tree/master/sndlib-networks-xml,
-  2005 vintage, 4-month-granularity peak demand matrix in Mbps) is a real,
-  independent GEANT-instance dataset: 22 nodes (ISO-country-code IDs like
-  `de1.de`, `ch1.ch`), a complete 22x21=462-entry pairwise demand matrix.
-- 21 of those 22 nodes match our Geant2012.graphml's country labels
-  exactly by identity (`ch1.ch` -> our node "8", labeled "Switzerland",
-  etc.) -- the only unmatched SNDlib node is `ny1.ny` (a transatlantic New
-  York node our topology doesn't have). The other 19 of our 40 nodes
-  (smaller/peripheral countries this 2005-vintage SNDlib instance simply
-  doesn't cover -- Balkans, ex-USSR states, Baltics, Iceland, Denmark)
-  have no real data to borrow and are NOT guessed at here -- callers fall
-  back to the pre-existing arbitrary formula for those, same as before.
-- Real per-node aggregate demand spans a real ~42x range (Switzerland's
-  total ~1.21M Mbps vs Luxembourg's ~29K) -- a genuine, non-trivial
-  statistical signal, not noise.
-
-Verified before adopting (per explicit user-requested sanity pass, not
-skipped): (1) the resulting edge-baseline distribution across our
-topology's real edges actually spreads out (30/61 edges have both
-endpoints matched; histogram over the target range is bell-shaped, not
-collapsed to one point); (2) hand-checked specific edges against
-intuition -- Luxembourg-touching edges land low (0.212-0.218), the
-Switzerland-Germany edge (the two single highest-demand matched nodes)
-lands highest among all matched edges (0.333), Austria-Germany lands
-solidly upper-middle (0.304) -- no edge that should intuitively be
-peripheral came out inflated or vice versa.
+Source: `data/sndlib_geant.xml` (SNDlib -- the Survivable Network Design
+Library, sndlib.zib.de -- 2005-vintage, 4-month-granularity peak demand
+matrix in Mbps), 22 nodes keyed by ISO-country-code id. 21 of those match
+this project's Geant2012.graphml nodes by country identity (the 22nd,
+`ny1.ny`, is a transatlantic New York node this topology doesn't have).
+The remaining ~19 of this topology's 40 nodes (smaller/peripheral
+countries this SNDlib instance doesn't cover) have no real data to borrow
+and are not guessed at -- callers fall back to the pre-existing arbitrary
+formula for those.
 """
 from __future__ import annotations
 
@@ -52,8 +28,7 @@ _SNDLIB_NS = {"sndlib": "http://sndlib.zib.de/network"}
 
 # SNDlib's 2-letter-country-code node id -> our Geant2012.graphml node id,
 # matched by real country identity (both datasets describe the same real
-# GEANT backbone, just different snapshots/years). Built and verified
-# 2026-08-20 -- see module docstring.
+# GEANT backbone, just different snapshots/years) -- see module docstring.
 _CODE_TO_OUR_NODE: Dict[str, str] = {
     "at": "29", "be": "1", "ch": "8", "cz": "5", "de": "4", "es": "25",
     "fr": "7", "gr": "15", "hr": "27", "hu": "22", "ie": "33", "il": "17",
@@ -64,26 +39,18 @@ _CODE_TO_OUR_NODE: Dict[str, str] = {
 # Target range for the log-scaled, normalized per-node baseline -- these
 # are *background* (non-hotspot) links, meant to carry mild ambient
 # traffic, not spike to congestion just because one endpoint is a real
-# high-demand hub. Originally chosen to bracket the pre-existing arbitrary
-# formula's own range (0.22-0.28); as of 2026-08-20 it's the other way
-# around -- FALLBACK_LOW/FALLBACK_HIGH below make the *fallback* formula
-# match *this* range instead, see that constant's docstring for why.
+# high-demand hub.
 _BASELINE_LOW = 0.15
 _BASELINE_HIGH = 0.35
 
 # Public: the same range, for simulation_common.py's fallback tier (edges
-# with no real or diversity data at all) to draw from. Added 2026-08-20
-# after finding the old fallback formula (`0.22 + 0.01*(index%6)`, a narrow
-# ~0.05-wide band) created a real, *systematic* -- not random -- bias: real
-# demand-calibrated edges between busy hub countries legitimately read
-# higher than this narrow band's ceiling, so any candidate path touching
-# even one uncalibrated node looked artificially cheap by comparison,
-# deterministically (verified across 20 different seeds, same result every
-# time). The fix isn't to fake real data for uncovered nodes -- it's to
-# stop *underrepresenting* their plausible range: draw uniformly across
-# the same [FALLBACK_LOW, FALLBACK_HIGH] real tiers use, so "no data" reads
-# as genuine uncertainty (could be a quiet edge, could be a busy one)
-# instead of a confident, artificially narrow "always moderate" guess.
+# with no real or diversity data at all) to draw from. A narrower fallback
+# band would systematically underrepresent uncovered edges relative to
+# real demand-calibrated ones between busy hub countries, making any
+# candidate path touching an uncovered node look artificially cheap by
+# comparison. Drawing uniformly across the same range real tiers use lets
+# "no data" read as genuine uncertainty instead of a confident, narrow
+# "always moderate" guess.
 FALLBACK_LOW = _BASELINE_LOW
 FALLBACK_HIGH = _BASELINE_HIGH
 
@@ -151,22 +118,16 @@ def resolve_edge_demand_baseline(u: str, v: str) -> Optional[float]:
 # ---------------------------------------------------------------------------
 # Tier 2: SNDlib "nobel-eu" -- scenario-diversity only, NOT a realism claim.
 #
-# Checked directly (2026-08-20) whether nobel-eu could extend the real-data
-# tier above: it cannot, and is kept structurally separate here so it never
-# gets confused with it. SNDlib's own literature classifies its network
-# instances into three backgrounds -- (a) real industrial-project data,
-# (b) "reference networks" defined *for* international research projects,
-# built to correspond to realistic planning scenarios rather than measured
-# from an operating network, (c) NDA-protected/undisclosed. nobel-eu is
-# case (b): it's the network defined by the EU-funded NOBEL project
-# (telecom operators + equipment vendors + academic partners), a
-# constructed planning scenario, not a measured one -- confirmed further by
-# the file itself carrying no <meta>/origin/unit tag at all (unlike
-# sndlib_geant.xml's explicit <unit>MBITPERSEC</unit> and
-# <origin>Steve Uhlig, real scaled peak matrix</origin>), and by its demand
-# values sitting on a wildly different, undocumented scale (e.g.
-# Amsterdam-Athens = 6.0, versus the real geant matrix's comparable-distance
-# pairs in the hundreds-to-thousands).
+# nobel-eu cannot extend the real-data tier above, and is kept structurally
+# separate so it's never confused with it. SNDlib classifies its network
+# instances into (a) real industrial-project data, (b) "reference networks"
+# defined *for* research projects as constructed planning scenarios rather
+# than measurements, and (c) NDA-protected/undisclosed. nobel-eu is case
+# (b): the network defined by the EU-funded NOBEL project, not a measured
+# one -- the file carries no <meta>/origin/unit tag at all (unlike
+# sndlib_geant.xml's explicit <unit>MBITPERSEC</unit> and real-data
+# <origin>), and its demand values sit on a wildly different, undocumented
+# scale from the real geant matrix's.
 #
 # Usable for a narrower, honest purpose instead: nobel-eu's 28 city nodes
 # cover 3 of our topology's countries the real geant matrix doesn't
@@ -211,24 +172,20 @@ def _load_diversity_baselines() -> Dict[str, float]:
     cities mapping to the same of our nodes (e.g. 4 German cities) are
     summed together first, same idea as the real tier's per-node total.
 
-    Re-centered (added 2026-08-20, see docstring below) to match tier 1's
-    empirical mean/std instead of trusting the raw min-max-to-[LOW,HIGH]
-    output -- min-max only guarantees the *full* nobel-eu distribution
-    spans [LOW,HIGH], not that whichever small subset of it maps onto our
-    topology's edges will. Checked directly: it doesn't -- the 6 our-edges
-    this tier actually serves came out with mean 0.186 vs tier 1's 0.256,
-    a real, deterministic (not seed-dependent) ~0.07 gap, found by a direct
-    user challenge ("would a background-generation preference bias which
-    path gets chosen?") right after the FALLBACK_LOW/HIGH fix above shipped.
-    Same underlying failure mode as that fix (a background tier reading
-    systematically low relative to the others, deterministically favoring
-    whichever candidate path happens to route through it) just surfacing
-    in a different, smaller tier (6 edges, not 25) that the first fix
-    didn't touch. Re-centering (z-score against tier 1's node-level mean/
-    std, not tier 2's own) fixes the *level* while preserving tier 2's own
-    relative shape -- Denmark still reads higher or lower than Norway
-    exactly as nobel-eu's own data implies, it just no longer reads
-    systematically low against tier 1 as a whole.
+    Re-centered to match tier 1's empirical mean/std instead of trusting
+    the raw min-max-to-[LOW,HIGH] output: min-max only guarantees the
+    *full* nobel-eu distribution spans [LOW,HIGH], not that whichever small
+    subset of it maps onto this topology's edges will -- the 6 edges this
+    tier actually serves came out with a real, deterministic mean gap
+    (0.186 vs tier 1's 0.256), the same "background tier reads
+    systematically low, deterministically favoring whichever candidate
+    path routes through it" failure mode the fallback-tier fix above
+    addresses, surfacing in a smaller tier that fix didn't touch.
+    Re-centering (z-score against tier 1's node-level mean/std, not tier
+    2's own) fixes the level while preserving tier 2's own relative shape
+    -- Denmark still reads higher or lower than Norway exactly as
+    nobel-eu's own data implies, it just no longer reads systematically
+    low against tier 1 as a whole.
     """
     global _diversity_baseline_cache
     if _diversity_baseline_cache is not None:

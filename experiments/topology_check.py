@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run Topology Validation - Week 1 Day 1-2 automation.
+Run Topology Validation.
 
 Loads the real GEANT topology from GraphML and computes real structural
 metrics (node/link counts, connectivity, diameter, average degree). Nothing
@@ -23,7 +23,7 @@ from src.routing.graph_builder import GraphBuilder
 
 
 class TopologyValidation:
-    """Run Week 1 Day 1-2 checks and persist Stage 1 deliverables."""
+    """Run topology validation checks and persist Stage 1 deliverables."""
 
     def __init__(self, output_dir: Optional[Path] = None, graphml_path: str = "data/Geant2012.graphml"):
         self.output_dir = output_dir or Path("results/topology")

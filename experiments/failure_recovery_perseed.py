@@ -3,10 +3,8 @@
 Failure/Recovery Per-Seed Aggregation - companion to
 failure_recovery_generalization.py, which collapses each pair's 5 seeds
 straight to a mean inside run_pair() and never writes the individual
-per-seed values anywhere (flagged as a real gap: see compliance_check.md /
-this session's scenario design audit, finding F3 -- increasing_load and
-stale_stats already have this companion, failure_recovery and
-priority_policy didn't).
+per-seed values anywhere (increasing_load and stale_stats already have
+this companion; this closes the same gap for failure_recovery).
 
 Writes one row per (pair, case, seed) instead of one row per (pair, case)
 -- 23 pairs x 2 cases x 5 seeds = 230 rows -- so a reader can compute a

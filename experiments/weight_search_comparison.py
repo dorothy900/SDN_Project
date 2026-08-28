@@ -1,83 +1,10 @@
 #!/usr/bin/env python3
 """
 Weight Search Comparison - grid search vs Bayesian optimization vs
-simulated annealing for path_cost_weights, evaluated against a
-ground-truth regret objective, not the isolated cost/path-selection checks
-in sensitivity_analysis.py.
-
-Updated 2026-08-19 from its original 3-dimensional shape (alpha/beta/gamma
-only, delta/epsilon fixed) to 6 dimensions (alpha/beta/gamma/delta/zeta/eta)
--- see the independence-check workstream's closing notes in
-compliance_check.md for why the formula now has 7 weights. epsilon is
-deliberately excluded from the search, not just fixed like before: a
-"down" link is removed from NetworkState's active_graph entirely (see
-TopologyState.set_link_status), so a nonzero epsilon cost can never apply
-to a link that's still a selectable part of one of these 3 comparison
-paths -- there's no way to give epsilon a real, differentiating cost here
-without breaking the "3 valid candidate paths" structure this comparison
-needs. epsilon stays at its production default throughout, contributing 0
-to every path's cost in this fixture (real for THIS fixture, not a design
-flaw -- see compliance_check.md's confidence-tier notes on epsilon).
-
-The objective: assume a "ground truth" relative importance across the 6
-searched weights exists (equal weight, 1/6 each -- an explicit modeling
-choice extending the original 3-weight version's same 1/3-each choice, not
-derived from anything; a different real deployment could reasonably pick a
-different ground truth) that is independent of the weights being searched.
-Those six numbers are the *decision-maker's* belief about relative
-importance, which may not match the ground truth. For a given weight
-vector, the decision-maker picks whichever of the three contrasting
-COST_PATH_* paths it believes is cheapest; regret is how much worse that
-choice is than the actual best path, measured under the ground-truth
-weights.
-
-Contrast fixture, extended from sensitivity_analysis.py's 3-way (bad
-utilization / bad delay / bad loss) split to also differentiate
-delta/zeta/eta, since a fresh NetworkState has zero churn history and a
-single stats stamp gives zero jitter (both trackers need >=3 samples) --
-searching those 3 dimensions against the original fixture would be
-searching over dimensions with no real signal.
-
-First attempt put one extra stability/jitter property on each of the 3
-paths individually (churn on A, delay-jitter on B, loss-jitter on C) --
-discarded after checking the actual regret landscape it produced: delta's
-signal sat on Path A, which is already unelectable purely from its 0.85
-utilization, so no realistic delta value could ever change which path gets
-chosen -- OAT sensitivity was a flat, structurally guaranteed zero. Putting
-a term on the side that's already lost (or already won) can't produce
-regret signal; only a term that changes the outcome for a path close to
-the ground-truth optimum can.
-
-Current design instead makes Path C a single "trap": still bad on loss
-(gamma) as before, but now *also* carries real churn, delay-jitter, and
-loss-jitter -- a path that looks fine once you additionally weigh
-stability, not just congestion. Path A stays untouched (bad utilization
-only -- still hopeless regardless of secondary weights, which is fine,
-mirrors sensitivity_analysis.py's own use of it). Path B stays untouched
-(bad delay only) and is deliberately left as the "clean, correct" answer:
-ground truth prefers it once delta/zeta/eta are counted, but a
-congestion-only view (low alpha/beta/gamma weight on Path C's modest loss)
-can be tricked into picking C instead. This gives delta a real, verified
-OAT range (dropping it to 0 measurably flips the decision back to the
-wrong path); zeta/eta's own raw magnitudes are realistic-sized (~0.07-0.2,
-matching the jitter scores actually measured on real links elsewhere in
-this project, not inflated for effect) so they mostly don't dominate this
-particular OAT sweep at production-default weights -- documented as a
-finding, not smoothed over: at today's small delta/zeta/eta weights, only
-delta is currently large enough (relative to its own realistic magnitude)
-to flip a decision on its own; zeta/eta act as fine-grained tie-breakers
-whose effect shows up in the full joint search, not in an isolated
-one-at-a-time sweep. The shared edge (34-7) stays a single neutral stamp,
-kept out of the contrast entirely.
-
-Three searches are run against the identical objective, same evaluation
-budget, so the comparison is fair:
-  - Grid search: a fixed, pre-chosen set of points (same style as
-    sensitivity_analysis.py).
-  - Bayesian optimization: a from-scratch Gaussian Process (RBF kernel) +
-    Expected Improvement loop, implemented in plain numpy (no scipy/sklearn
-    available in this environment).
-  - Simulated annealing.
+simulated annealing vs DIRECT for path_cost_weights, evaluated against a
+shared ground-truth regret objective under a matched evaluation budget
+(as opposed to the isolated cost/path-selection checks in
+sensitivity_analysis.py).
 
 Run as: python3 -m experiments.weight_search_comparison
 """
@@ -107,10 +34,21 @@ from .simulation_common import build_network_state, link_id
 from src.monitor.models import LinkStatistics
 from src.routing.graph_builder import GraphBuilder
 
+# Searches 6 of the formula's 7 weights; epsilon is excluded and pinned at 0 -- a "down" link
+# is removed from NetworkState's active_graph entirely, so epsilon can never apply to any of
+# this comparison's 3 candidate paths.
 PARAM_ORDER = ["alpha", "beta", "gamma", "delta", "zeta", "eta"]
 GROUND_TRUTH_WEIGHTS = {p: 1.0 / len(PARAM_ORDER) for p in PARAM_ORDER}
 GROUND_TRUTH_WEIGHTS["epsilon"] = 0.0
 BOUNDS = {p: (0.0, 1.0) for p in PARAM_ORDER}
+
+# zeta has by far the smallest OAT regret range of the 6 searched weights (0.041, vs 0.121
+# for the next-lowest, beta) -- see oat_sensitivity_ranked_by_impact in the report this
+# module writes. run_direct_then_sa() fixes it at its production default to search 5 dims
+# instead of 6; delta/eta are NOT fixed here despite superficially looking like secondary
+# weights, since their own OAT ranges (0.301, 0.256) are actually higher than beta's.
+HYBRID_FREE_PARAMS = ["alpha", "beta", "gamma", "delta", "eta"]
+HYBRID_ZETA_FIXED = 0.05
 
 # 6 dims: matched grid/BO/SA budgets at 3 points/dim (3^6=729) -- large
 # enough to be a meaningful comparison, small enough that BO's O(budget^3)
@@ -127,28 +65,21 @@ NUM_TRIALS = 250  # averaging regret over this many independently-randomized
                   # docstring for why a single trial was rejected as a
                   # benchmark (73% of the 6-D space tied at regret=0).
                   #
-                  # Raised from 15 (2026-08-20) via a Law & Kelton
-                  # pilot-variance sample-size check, redone from scratch
-                  # this session rather than trusting a recalled number: 30
-                  # independent 15-trial regret estimates at a production-
-                  # like weight point (0.4/0.3/0.2/0.05/0.05/0.05) gave
-                  # mean=0.00889, std=0.01012 -- a coefficient of variation
-                  # >1, because regret is zero-inflated near this point
-                  # (item 16/17's "68% zero-regret base rate" finding: most
-                  # trials land exactly at 0, a minority carry the whole
-                  # nonzero signal). That makes a *relative*-precision
-                  # target (e.g. 95% CI within 10% of the mean) infeasible
-                  # -- it demands N in the thousands purely because the
-                  # mean itself is tiny, not because the estimate is
-                  # actually unstable in any practically meaningful sense.
-                  # Targeted *absolute* precision instead (95% CI half-width
-                  # <= 0.005, small relative to this project's documented
-                  # nonzero OAT sensitivities of 0.033-0.167 -- see item 15):
-                  # implied per-trial std ~0.0392 -> required N ~236,
-                  # rounded up to 250 for pilot-estimate safety margin.
-                  # Costs ~0.30-0.37s/objective-call (measured directly at
-                  # 200; scaled), still affordable for the 729-point
-                  # grid/DIRECT/BO/SA comparisons this module runs.
+                  # Sized via a Law & Kelton pilot-variance sample-size
+                  # check: a 15-trial pilot at a production-like weight
+                  # point showed regret is zero-inflated there (most trials
+                  # land exactly at 0, a minority carry the whole nonzero
+                  # signal), which makes a *relative*-precision target
+                  # infeasible -- it would demand N in the thousands purely
+                  # because the mean itself is tiny, not because the
+                  # estimate is actually unstable. Targeted *absolute*
+                  # precision instead (95% CI half-width <= 0.005, small
+                  # relative to this project's documented nonzero OAT
+                  # sensitivities of 0.033-0.167): implied per-trial std
+                  # ~0.0392 -> required N ~236, rounded up to 250 for pilot-
+                  # estimate safety margin. Costs ~0.30-0.37s/objective-call,
+                  # still affordable for the 729-point grid/DIRECT/BO/SA
+                  # comparisons this module runs.
 
 
 def _build_extended_contrast_state(seed: int = 0):
@@ -175,14 +106,11 @@ def _build_extended_contrast_state(seed: int = 0):
     # *controlled* jitter signal (bad_loss + swing) -- but without this
     # reset, that background sample would silently count as a 4th,
     # unintended sample in the same rolling window, letting whatever the
-    # background baseline happened to be (arbitrary formula, or now
-    # SNDlib-calibrated -- see sndlib_demand.py) leak into what's supposed
-    # to be a fully scripted, graded-severity signal. Found 2026-08-20 when
-    # regret at CURRENT_DEFAULTS shifted after the SNDlib background change
-    # despite every path-relevant edge being explicitly stamped -- this is
-    # the mechanism. Reset wipes it for every link_id, which is safe here:
-    # nothing has read jitter yet, and only Path A/B/C/shared edges are
-    # ever consulted via get_path_cost().
+    # background baseline happens to be (see sndlib_demand.py) leak into
+    # what's supposed to be a fully scripted, graded-severity signal.
+    # Reset wipes it for every link_id, which is safe here: nothing has
+    # read jitter yet, and only Path A/B/C/shared edges are ever consulted
+    # via get_path_cost().
     state.delay_jitter.reset()
     state.loss_jitter.reset()
 
@@ -202,15 +130,11 @@ def _build_extended_contrast_state(seed: int = 0):
 
     # Path A: bad utilization only, severity graded across trials -- still
     # deliberately left clean on delta/zeta/eta (putting a term on a path
-    # that's hopeless on alpha alone can never produce regret signal, see
-    # docstring's "first attempt" note below).
+    # that's hopeless on alpha alone can never produce regret signal).
     #
-    # Range grounded 2026-08-20 in real Mininet-measured congestion data
+    # Range grounded in real Mininet-measured congestion data
     # (results/independence_check/independence_samples.csv, 196 real
-    # samples, the same dataset the independence-check workstream used) --
-    # replacing the original hand-picked (0.55, 0.95): real achieved_
-    # utilization's p75-max is (0.445, 0.782). Was previously wider than
-    # anything ever actually measured on this project's real links.
+    # samples): real achieved_utilization's p75-max is (0.445, 0.782).
     bad_u = rng.uniform(0.445, 0.782)
     for u, v in COST_PATH_A_UNIQUE_EDGES:
         stamp(u, v, utilization=bad_u, delay_ms=2.0, loss=0.0001, now=ts)
@@ -218,12 +142,9 @@ def _build_extended_contrast_state(seed: int = 0):
     # Path B: bad delay only, severity graded -- the "correct" ground-truth
     # answer more often than not, left clean on delta/zeta/eta.
     #
-    # Range grounded 2026-08-20 in the same real dataset's delay_ms column:
-    # p75-p99 is (177.8, 697.1) ms -- replacing the original hand-picked
-    # (15.0, 70.0). Real congestion-induced delay on this project's own
-    # measured links runs far higher than the old range assumed; capped at
-    # p99 rather than the real max (1368.1ms) to avoid one outlier sample
-    # stretching the whole range.
+    # Range grounded in the same real dataset's delay_ms column: p75-p99 is
+    # (177.8, 697.1) ms, capped at p99 rather than the real max (1368.1ms)
+    # to avoid one outlier sample stretching the whole range.
     bad_delay = rng.uniform(177.8, 697.1)
     for u, v in COST_PATH_B_UNIQUE_EDGES:
         stamp(u, v, utilization=0.10, delay_ms=bad_delay, loss=0.0001, now=ts)
@@ -233,18 +154,14 @@ def _build_extended_contrast_state(seed: int = 0):
     # dispersion to measure -- single-sample jitter is always 0.0, both
     # trackers need >=3 samples), all graded per trial.
     #
-    # base_loss grounded 2026-08-20 in results/loss_saturation_check/
-    # loss_samples.csv's nonzero real measured loss (20/30 real samples):
-    # p25-p75 is (0.182, 0.520) -- replacing the hand-picked (0.02, 0.12),
-    # which undershot real measured congestion loss by roughly an order of
-    # magnitude. loss_swing kept as a moderate fraction of that range
-    # (not independently grounded in a matching real per-trial-swing
-    # statistic -- no such measurement exists in this project's data --
-    # documented as a judgment call, not overclaimed as measured).
-    # churn_events capped at 4 (not the original 6): real churn_score in
-    # results/churn_jitter_check/churn_jitter_samples.csv never exceeded
-    # 0.8 (saturation_count=5 means each event contributes 0.2, so 0.8 = 4
-    # real events observed, never the full 5/1.0).
+    # base_loss grounded in results/loss_saturation_check/loss_samples.csv's
+    # nonzero real measured loss (20/30 real samples): p25-p75 is (0.182,
+    # 0.520). loss_swing is a moderate fraction of that range (a judgment
+    # call -- no matching real per-trial-swing statistic exists to ground
+    # it against). churn_events capped at 4 (not the theoretical max of 6):
+    # real churn_score in results/churn_jitter_check/churn_jitter_samples.csv
+    # never exceeded 0.8 (saturation_count=5, so 0.8 = 4 real events
+    # observed, never the full 5/1.0).
     base_loss = rng.uniform(0.182, 0.520)
     loss_swing = rng.uniform(0.02, 0.15)
     churn_events = rng.randint(1, 4)
@@ -271,36 +188,14 @@ def make_objective(
     num_trials: int = NUM_TRIALS, seed_offset: int = 0
 ) -> Tuple[Callable[..., float], List[Dict[str, float]]]:
     """
-    Build the regret objective, averaged across `num_trials` independently
-    randomized contrast scenarios rather than one fixed one.
+    Build the regret objective, averaged across `num_trials` independently randomized
+    contrast scenarios rather than one fixed severity -- a single fixed trial left 73% of a
+    3000-point random sample of the 6-D weight space tied at regret=0 (alpha/gamma alone
+    already settled the decision most of the time), so averaging over graded severities is
+    what makes delta/zeta/eta's weight actually matter to the outcome.
 
-    seed_offset (added 2026-08-19 for run_multi_instance_comparison()):
-    _build_extended_contrast_state() is seeded off `range(num_trials)`
-    (0..num_trials-1) by default, so calling make_objective() twice with the
-    same num_trials always rebuilds the *exact same* 15 trials -- fine for
-    a single, reused benchmark objective, but wrong for a fair multi-instance
-    comparison across genuinely different problem draws. Passing a distinct
-    seed_offset per instance (e.g. instance k uses seed_offset=k*num_trials)
-    gives each instance its own non-overlapping trial-seed range.
-
-    A single fixed-severity trial (the original design) turned out to be a
-    poor benchmark: checking the actual regret landscape showed 73% of a
-    3000-point random sample of the 6-D weight space tied at regret=0 --
-    almost any weight vector "won" because Path A/C's badness was so
-    extreme that alpha/gamma alone already settled the decision most of the
-    time, leaving delta/zeta/eta's own weight largely irrelevant to the
-    outcome. Averaging regret over many trials with graded (not
-    all-or-nothing) severities fixes this: a weight vector now has to do
-    reasonably well across a *distribution* of scenarios, including ones
-    where the primary/secondary dimensions are close enough that getting
-    delta/zeta/eta's relative weight right actually changes the outcome --
-    which is both a harder and a more realistic test (real deployments see
-    a distribution of congestion severities, not one fixed worst case).
-
-    Returns regret(alpha, beta, gamma, delta, zeta, eta, epsilon=0.05) --
-    epsilon defaults to the project's current value and is never searched
-    (see module docstring for why); it contributes 0 to every path's cost
-    in every trial, since no edge here is ever "down".
+    seed_offset lets run_multi_instance_comparison() give each instance its own
+    non-overlapping trial-seed range instead of rebuilding the same trials every time.
     """
     now = datetime(2026, 8, 24, 12, 0, 0).timestamp()
     trials: List[Tuple[object, Dict[str, float], float]] = []
@@ -339,30 +234,14 @@ def make_objective(
 
 def normalize_weights(raw: Sequence[float], epsilon: float = 0.05) -> Dict[str, float]:
     """
-    Rescale the 6 searched weights to sum to (1 - epsilon), keeping epsilon
-    fixed -- so the 7 real production weights always sum to ~1, matching
-    CURRENT_DEFAULTS's own convention (0.4+0.3+0.2+0.05*4=1.10, close to 1
-    by original design). Added 2026-08-19 after a real-scenario check found
-    DIRECT's raw all-0.5 recommendation (found by searching each of the 6
-    weights independently over [0,1], with no constraint tying them
-    together) let delta/zeta/eta -- meant as small, secondary
-    stability tie-breakers -- compete head-to-head with alpha, the primary
-    congestion signal: a real GraphBuilder test showed a 30%-utilized but
-    recently-churned link (cost 0.451) pricing *higher* than an 85%-utilized,
-    perfectly stable link (cost 0.426) under that raw vector -- the DecisionEngine
-    would have preferred heavy real congestion over mild instability, the
-    opposite of this project's stability-aware design intent. Without a
-    shared "budget" tying the 6 weights together, DIRECT's rectangle
-    search has no way to know that alpha and delta are supposed to play
-    different roles -- every point in [0,1]^6 looks equally legitimate to
-    it. Normalizing to a fixed-sum simplex restores that coupling: raising
-    delta's share necessarily lowers the others', so a search can no longer
-    accidentally recommend all 6 pinned near their individual maximums at
-    once. total=0 (all-zero raw vector) falls back to an equal split
-    instead of dividing by zero.
+    Rescale the 6 searched weights to sum to (1 - epsilon), keeping epsilon fixed, so the 7
+    production weights always sum to ~1. Without this a search can recommend delta/zeta/eta
+    -- meant as small, secondary tie-breakers -- at a magnitude that competes head-to-head
+    with alpha, letting mild instability outweigh heavy real congestion.
     """
     total = sum(raw)
     if total <= 0:
+        # All-zero raw vector: fall back to an equal split instead of dividing by zero.
         share = (1.0 - epsilon) / len(raw)
         scaled = [share] * len(raw)
     else:
@@ -578,12 +457,11 @@ def run_simulated_annealing(
     return rows
 
 
-COMPARISON_NUM_SEEDS = 50  # bumped from 30 2026-08-19 per user request, for
-                            # more statistical power on the Mann-Whitney/
-                            # Cliff's delta comparisons -- benchmarked first
-                            # (~7.5s/instance for the 4-method multi-instance
-                            # comparison) to confirm 50 stays practical
-                            # (~6 minutes) rather than picking it blind.
+COMPARISON_NUM_SEEDS = 50  # statistical power for the Mann-Whitney/Cliff's
+                            # delta comparisons; benchmarked (~7.5s/instance
+                            # for the 4-method multi-instance comparison,
+                            # ~6 minutes total) to confirm this stays
+                            # practical rather than picking it blind.
 COMPARISON_INIT_POINTS = 8
 COMPARISON_ITERATIONS = 22  # 30 evaluations/run total -- a realistic
                              # "practical retuning budget" (nobody re-tunes
@@ -597,7 +475,7 @@ COMPARISON_ITERATIONS = 22  # 30 evaluations/run total -- a realistic
 
 
 # ---------------------------------------------------------------------------
-# DIRECT (DIviding RECTangles) -- added 2026-08-19 after establishing the
+# DIRECT (DIviding RECTangles) -- a good fit for this objective because the
 # regret objective's real structure is piecewise-constant (each path's cost
 # is linear in the weights, so "which path wins" only changes at sharp
 # decision boundaries between trials), which breaks GP-based BO's core
@@ -636,6 +514,92 @@ def run_direct(objective, budget: int = COMPARISON_INIT_POINTS + COMPARISON_ITER
     bounds = [BOUNDS[p] for p in PARAM_ORDER]
     scipy_direct(wrapped, bounds=bounds, maxfun=budget)
     return rows
+
+
+def run_direct_then_sa(
+    objective,
+    phase1_budget: int = COMPARISON_INIT_POINTS,
+    phase2_iterations: int = COMPARISON_ITERATIONS,
+    sa_seed: int = 0,
+    zeta_fixed: float = HYBRID_ZETA_FIXED,
+    neighborhood_pad: float = 0.15,
+) -> List[Dict[str, object]]:
+    """
+    Two-stage hybrid over HYBRID_FREE_PARAMS (zeta fixed): DIRECT scans the space broadly
+    first (phase1_budget evals), then SA refines within a bounding box around DIRECT's
+    non-zero-regret points (the flat zero-regret majority of this benchmark is already
+    "solved" and uninformative -- the box targets the actual decision boundary) for the
+    remaining budget. Falls back to the full space if DIRECT's scan never left the
+    zero-regret plateau.
+
+    Total budget matches the other methods' (phase1_budget + phase2_iterations), but scipy's
+    `maxfun` is an approximate cap, not a hard one -- DIRECT can't stop mid-iteration, so at
+    small budgets in 5 dimensions it can overshoot by 2x or more (confirmed directly:
+    phase1_budget=8 produced 19 real evaluations). phase2's iteration count is corrected
+    for that overshoot below so the *total* evaluation count stays budget-matched, even
+    though phase1 alone may have used more of it than requested.
+    """
+    def fixed_objective(alpha: float, beta: float, gamma: float, delta: float, eta: float) -> float:
+        return objective(alpha=alpha, beta=beta, gamma=gamma, delta=delta, zeta=zeta_fixed, eta=eta)
+
+    free_bounds = {p: BOUNDS[p] for p in HYBRID_FREE_PARAMS}
+
+    phase1_rows: List[Dict[str, object]] = []
+
+    def wrapped(x: np.ndarray) -> float:
+        point = [float(v) for v in x]
+        r = fixed_objective(*point)
+        phase1_rows.append({**dict(zip(HYBRID_FREE_PARAMS, point)), "regret": r, "phase": "direct_scan"})
+        return r
+
+    scipy_direct(wrapped, bounds=[free_bounds[p] for p in HYBRID_FREE_PARAMS], maxfun=phase1_budget)
+
+    # Correct phase 2's budget for phase 1's real (possibly larger) evaluation count, so the
+    # combined total stays matched to the other methods' budget instead of silently growing.
+    total_budget = phase1_budget + phase2_iterations
+    phase2_iterations = max(1, total_budget - len(phase1_rows))
+
+    nontrivial = [r for r in phase1_rows if r["regret"] > 0]
+    if nontrivial:
+        box = {
+            p: (
+                max(free_bounds[p][0], min(r[p] for r in nontrivial) - neighborhood_pad),
+                min(free_bounds[p][1], max(r[p] for r in nontrivial) + neighborhood_pad),
+            )
+            for p in HYBRID_FREE_PARAMS
+        }
+    else:
+        box = free_bounds
+
+    # Phase 2: same accept-always-if-better / accept-worse-with-probability exp(-delta/T)
+    # scheme as run_simulated_annealing, but proposals are clipped to `box`, not [0,1].
+    rng = random.Random(sa_seed)
+    current = [rng.uniform(*box[p]) for p in HYBRID_FREE_PARAMS]
+    current_regret = fixed_objective(*current)
+    phase2_rows: List[Dict[str, object]] = [{
+        **dict(zip(HYBRID_FREE_PARAMS, current)), "regret": current_regret,
+        "temperature": SA_INITIAL_TEMPERATURE, "accepted": True, "phase": "sa_refine",
+    }]
+    temperature = SA_INITIAL_TEMPERATURE
+    for _ in range(phase2_iterations - 1):
+        candidate = [
+            min(max(current[i] + rng.gauss(0.0, SA_PROPOSAL_STD), box[HYBRID_FREE_PARAMS[i]][0]),
+                box[HYBRID_FREE_PARAMS[i]][1])
+            for i in range(len(HYBRID_FREE_PARAMS))
+        ]
+        candidate_regret = fixed_objective(*candidate)
+        delta = candidate_regret - current_regret
+        accept_prob = math.exp(-delta / temperature) if temperature > 1e-12 else 0.0
+        accept = delta <= 0 or rng.random() < accept_prob
+        if accept:
+            current, current_regret = candidate, candidate_regret
+        phase2_rows.append({
+            **dict(zip(HYBRID_FREE_PARAMS, candidate)), "regret": candidate_regret,
+            "temperature": round(temperature, 6), "accepted": accept, "phase": "sa_refine",
+        })
+        temperature *= SA_COOLING_RATE
+
+    return phase1_rows + phase2_rows
 
 
 def run_random_search(
@@ -755,23 +719,14 @@ def spawn_independent_seeds(master_seed: int, num_streams: int, num_per_stream: 
 
 def run_multiseed_comparison(objective, num_seeds: int = COMPARISON_NUM_SEEDS) -> Dict[str, object]:
     """
-    Run BO and SA num_seeds times each, independently seeded (see
-    spawn_independent_seeds()), at a matched, realistic budget
-    (COMPARISON_INIT_POINTS + COMPARISON_ITERATIONS = 30 evaluations/run).
+    Run BO and SA num_seeds times each, independently seeded, at a matched budget
+    (COMPARISON_INIT_POINTS + COMPARISON_ITERATIONS evaluations/run).
 
-    Primary comparison metric is *cumulative* regret (sum of regret over
-    every evaluated point in a run), not final/best regret -- checked
-    empirically first: at this benchmark's 68% zero-regret base rate,
-    final regret is degenerate (both methods reach exactly 0.0 in
-    essentially every run at any realistic budget, since even one random
-    draw already succeeds 68% of the time -- there's no budget small enough
-    to fix this without making the "curve" comparison meaningless with only
-    1-2 points). Cumulative regret is the standard bandit/online-learning
-    metric for exactly this situation: it captures how much a method
-    "wastes" evaluating clearly-worse points along the way, which final
-    regret is blind to once every method eventually finds the optimum.
-    Final regret is still recorded (near-certain to be a degenerate tie)
-    as a sanity check, not the headline number.
+    Primary metric is *cumulative* regret, not final/best regret: at this benchmark's 68%
+    zero-regret base rate, final regret is degenerate (both methods hit exactly 0.0 in
+    essentially every run), while cumulative regret still captures how much a method
+    "wastes" evaluating clearly-worse points along the way. Final regret is still
+    recorded as a sanity check, not the headline number.
     """
     seed_streams = spawn_independent_seeds(master_seed=20260819, num_streams=2, num_per_stream=num_seeds)
     bo_seeds, sa_seeds = seed_streams
@@ -840,12 +795,12 @@ def run_multiseed_comparison(objective, num_seeds: int = COMPARISON_NUM_SEEDS) -
     }
 
 
-MULTI_INSTANCE_METHODS = ["direct", "bayesian_optimization", "simulated_annealing", "random_search"]
+MULTI_INSTANCE_METHODS = ["direct", "bayesian_optimization", "simulated_annealing", "random_search", "direct_then_sa_hybrid"]
 
 
 def run_multi_instance_comparison(num_instances: int = COMPARISON_NUM_SEEDS) -> Dict[str, object]:
     """
-    A fairer 3-way (now 4-way) comparison than run_multiseed_comparison():
+    A fairer 3-way (now 5-way) comparison than run_multiseed_comparison():
     that function ran BO/SA many times against one *fixed* objective, so
     its "many samples" only captured each optimizer's own internal
     randomness, not variation in the underlying problem -- fine for a
@@ -855,15 +810,15 @@ def run_multi_instance_comparison(num_instances: int = COMPARISON_NUM_SEEDS) -> 
     num_instances *independent* problem instances (via make_objective's
     seed_offset -- see its docstring) and runs DIRECT (deterministic, so
     its own variation comes entirely from the instance varying), BO, SA,
-    and plain random search once each per instance, all at the same
-    budget. Random search is included as the null-model baseline: without
-    it, DIRECT's advantage over BO/SA can't be distinguished from "this
-    benchmark is just easy, anything works" -- comparing against uniform
-    random sampling is what actually tests whether DIRECT's partitioning
-    is doing something smarter than chance.
+    plain random search, and the DIRECT-then-SA hybrid once each per
+    instance, all at the same budget. Random search is included as the
+    null-model baseline: without it, DIRECT's advantage over BO/SA can't be
+    distinguished from "this benchmark is just easy, anything works" --
+    comparing against uniform random sampling is what actually tests
+    whether DIRECT's partitioning is doing something smarter than chance.
     """
-    seed_streams = spawn_independent_seeds(master_seed=20260819, num_streams=3, num_per_stream=num_instances)
-    bo_seeds, sa_seeds, random_seeds = seed_streams
+    seed_streams = spawn_independent_seeds(master_seed=20260819, num_streams=4, num_per_stream=num_instances)
+    bo_seeds, sa_seeds, random_seeds, hybrid_seeds = seed_streams
     budget = COMPARISON_INIT_POINTS + COMPARISON_ITERATIONS
 
     cumulative: Dict[str, List[float]] = {m: [] for m in MULTI_INSTANCE_METHODS}
@@ -890,6 +845,10 @@ def run_multi_instance_comparison(num_instances: int = COMPARISON_NUM_SEEDS) -> 
         ))
         record("simulated_annealing", run_simulated_annealing(instance_objective, seed=sa_seeds[i], iterations=budget))
         record("random_search", run_random_search(instance_objective, seed=random_seeds[i], budget=budget))
+        record("direct_then_sa_hybrid", run_direct_then_sa(
+            instance_objective, phase1_budget=COMPARISON_INIT_POINTS, phase2_iterations=COMPARISON_ITERATIONS,
+            sa_seed=hybrid_seeds[i],
+        ))
 
     # Mean convergence curve per method -- traces can be shorter than
     # `budget` for DIRECT (scipy's maxfun is an approximate cap, actual
@@ -902,7 +861,8 @@ def run_multi_instance_comparison(num_instances: int = COMPARISON_NUM_SEEDS) -> 
     }
 
     pairs = [("direct", "bayesian_optimization"), ("direct", "simulated_annealing"),
-             ("direct", "random_search"), ("bayesian_optimization", "simulated_annealing")]
+             ("direct", "random_search"), ("bayesian_optimization", "simulated_annealing"),
+             ("direct_then_sa_hybrid", "direct"), ("direct_then_sa_hybrid", "simulated_annealing")]
     comparisons = {
         f"{a}_vs_{b}_cumulative": {
             **mann_whitney_u(cumulative[a], cumulative[b]),
@@ -942,13 +902,14 @@ def plot_convergence_curves(multi_instance: Dict[str, object], output_path: Path
     curves = multi_instance["mean_convergence_curves"]
     fig, ax = plt.subplots(figsize=(8, 5))
     labels = {"direct": "DIRECT", "bayesian_optimization": "Bayesian Optimization",
-              "simulated_annealing": "Simulated Annealing", "random_search": "Random Search"}
+              "simulated_annealing": "Simulated Annealing", "random_search": "Random Search",
+              "direct_then_sa_hybrid": "DIRECT-then-SA Hybrid"}
     for method in MULTI_INSTANCE_METHODS:
         curve = curves[method]
         ax.plot(range(1, len(curve) + 1), curve, label=labels.get(method, method), linewidth=2)
     ax.set_xlabel("Evaluation count")
     ax.set_ylabel("Mean best-so-far regret (averaged across instances)")
-    ax.set_title("Convergence: DIRECT vs BO vs SA vs Random Search")
+    ax.set_title("Convergence: DIRECT vs BO vs SA vs Random Search vs Hybrid")
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -1037,19 +998,24 @@ def main() -> None:
     # silently default to seed=0, which (see run_bayesian_optimization's
     # docstring) made their first random draw identical and was part of
     # what made the original single-run comparison misleading.
-    [(headline_bo_seed,), (headline_sa_seed,)] = spawn_independent_seeds(
-        master_seed=20260819, num_streams=2, num_per_stream=1
+    [(headline_bo_seed,), (headline_sa_seed,), (headline_hybrid_seed,)] = spawn_independent_seeds(
+        master_seed=20260819, num_streams=3, num_per_stream=1
     )
 
     grid_rows = run_grid_search(objective)
     bo_rows = run_bayesian_optimization(objective, seed=headline_bo_seed)
     sa_rows = run_simulated_annealing(objective, seed=headline_sa_seed)
     direct_rows = run_direct(objective, budget=len(grid_rows))  # same budget as grid, for apples-to-apples
+    # Same total budget as grid/direct's headline run, split 50 DIRECT-scan / rest SA-refine.
+    hybrid_rows = run_direct_then_sa(
+        objective, phase1_budget=50, phase2_iterations=len(grid_rows) - 50, sa_seed=headline_hybrid_seed,
+    )
 
     grid_best = min(grid_rows, key=lambda r: r["regret"])
     bo_best = min(bo_rows, key=lambda r: r["regret"])
     sa_best = min(sa_rows, key=lambda r: r["regret"])
     direct_best = min(direct_rows, key=lambda r: r["regret"])
+    hybrid_best = min(hybrid_rows, key=lambda r: r["regret"])
 
     with (output_dir / "weight_search_grid.csv").open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(grid_rows[0].keys()))
@@ -1065,6 +1031,15 @@ def main() -> None:
         w = csv.DictWriter(f, fieldnames=list(sa_rows[0].keys()))
         w.writeheader()
         w.writerows(sa_rows)
+
+    with (output_dir / "weight_search_direct_then_sa_hybrid.csv").open("w", newline="", encoding="utf-8") as f:
+        # phase1 (direct_scan) rows lack the temperature/accepted keys phase2 (sa_refine)
+        # rows carry -- union the fieldnames across all rows rather than assuming the first
+        # row's keys cover every row.
+        fieldnames = list(dict.fromkeys(k for row in hybrid_rows for k in row.keys()))
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        w.writerows(hybrid_rows)
 
     def running_best(rows):
         best = float("inf")
@@ -1108,6 +1083,7 @@ def main() -> None:
         "bayesian_optimization": {k: bo_best[k] for k in PARAM_ORDER},
         "simulated_annealing": {k: sa_best[k] for k in PARAM_ORDER},
         "grid_search": {k: grid_best[k] for k in PARAM_ORDER},
+        "direct_then_sa_hybrid": {**{k: hybrid_best[k] for k in HYBRID_FREE_PARAMS}, "zeta": HYBRID_ZETA_FIXED},
         "current_production_defaults": CURRENT_DEFAULTS,
     }
     out_of_sample = run_out_of_sample_validation(out_of_sample_candidates)
@@ -1148,6 +1124,11 @@ def main() -> None:
             "best_point": {k: direct_best[k] for k in PARAM_ORDER},
             "num_evals": len(direct_rows),
         },
+        "direct_then_sa_hybrid": {
+            "best_regret": hybrid_best["regret"],
+            "best_point": {**{k: hybrid_best[k] for k in HYBRID_FREE_PARAMS}, "zeta": HYBRID_ZETA_FIXED},
+            "num_evals": len(hybrid_rows),
+        },
         "multiseed_comparison": {
             "num_seeds": multiseed["num_seeds"],
             "budget_per_run": multiseed["budget_per_run"],
@@ -1160,7 +1141,7 @@ def main() -> None:
             "sa_median_cumulative_regret": multiseed["sa_median_cumulative_regret"],
             "mann_whitney_u_cumulative_regret": multiseed["mann_whitney_u_cumulative_regret"],
         },
-        "multi_instance_comparison_direct_vs_bo_vs_sa_vs_random": {
+        "multi_instance_comparison_direct_vs_bo_vs_sa_vs_random_vs_hybrid": {
             "num_instances": multi_instance["num_instances"],
             "budget_per_run": multi_instance["budget_per_run"],
             "mean_cumulative_regret": {m: multi_instance[f"{m}_mean_cumulative_regret"] for m in MULTI_INSTANCE_METHODS},

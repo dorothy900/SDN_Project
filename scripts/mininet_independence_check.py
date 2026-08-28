@@ -1,56 +1,9 @@
 #!/usr/bin/env python3
 """
-Mininet Independence Check v2 - redesigned utilization/delay/loss correlation
-experiment, fixing three real methodological gaps found on review of the
-first pass (scripts/mininet_correlation_check.py, results/correlation_check/):
-
-  1. Test order was a monotonic utilization sweep, confounding utilization
-     with elapsed time/warm-up drift. Fixed: the full (link, rate, trial)
-     sample list is generated up front and executed in randomized order.
-  2. Only one link was tested. Fixed: three real GEANT links.
-  3. Requested iperf rates never actually pushed achieved utilization past
-     ~60% (UDP send rate is not reliably hit at high target rates), so the
-     >70% region where the loss model expects an effect was never sampled.
-     Fixed: the two highest levels intentionally request *more* than the
-     link's 100Mbit cap (110/130Mbit) -- the real tc/htb shaper on the
-     interface is a hard limit, so overshooting it deterministically forces
-     near-saturation utilization (and real, observable loss) regardless of
-     how precisely iperf hits its nominal send rate. (This assumed every
-     tested link was capped at 100Mbit, true when this was first run; since
-     topology.py started applying real per-link GEANT bandwidth (2026-08-12),
-     s5-s6 is actually 150Mbit -- REQUESTED_RATES_MBPS's overshoot values no
-     longer guarantee saturating *that* link specifically. Left as-is since
-     the 60 samples already collected predate that change; a future rerun
-     should widen REQUESTED_RATES_MBPS or check per link.)
-
-Also computes real dependence statistics on the collected samples via
-experiments/independence_stats.py (Spearman + permutation test, distance
-correlation, VIF) -- both on raw delay/loss and on their residuals against
-congestion_model.py's predicted curve, since the residual result doubles as
-a diagnostic for whether that curve is well-calibrated (see
-compliance_check.md and results/correlation_check/).
-
+Mininet Independence Check v2 - real-hardware utilization/delay/loss
+correlation experiment across four GEANT links, in randomized sample order.
 Does NOT cover instability (delta/churn) or reliability (epsilon) -- those
-are driven by real DecisionEngine reroute events, not raw traffic load, and
-need a differently-shaped experiment (see pending task 1's note on this).
-
-Coverage-range extension (2026-08-19): the first three links all sit at
-100/150Mbit, comfortably above this VM's own iperf UDP generation ceiling
-(~50-55Mbit/s, established over multiple runs) -- so achieved_utilization
-across every pass so far has topped out around 0.55, regardless of how much
-the requested rate overshoots the link's real cap. That leaves the u>0.55
-region (where congestion_delay_bump_ms's curve does most of its work, and
-where MAX_UTILIZATION_FOR_EXTRAPOLATION=0.6 starts clamping) with zero real
-coverage. Added a 4th real link, s5-s14 (GEANT's "155 Mbps" tier, scaled to
-20Mbit by topology.py -- same one mininet_loss_saturation_check.py used to
-reach u=0.89), with its own lower rate schedule so the *same* VM generation
-ceiling now represents a much larger fraction of that link's actual
-capacity. Also switched loss measurement to QdiscLossTracker (reads tc's own
-drop counters) instead of StatisticsCollector.calculate_loss_rate() (OVS
-port counters) for all links -- OVS's drop= counter is structurally blind to
-tc/htb shaping drops (confirmed in the loss-saturation investigation), which
-matters specifically for s5-s14 since that link is expected to actually
-saturate.
+need a differently-shaped experiment (see decision_churn_independence.py).
 
 Run as: sudo python3 scripts/mininet_independence_check.py
 """
@@ -87,34 +40,28 @@ from experiments.independence_stats import (
 OF_VERSION = "OpenFlow13"
 HOST_LINK_DELAY_MS = 1.0
 
-# Four real, distinct GEANT links. The first three sit at 100/150Mbit
-# (topology.py resolves real GEANT bandwidth as of 2026-08-12: s5-s6 is a
-# real 10Gbps edge configured at 150Mbit; the other two have no real label
-# and keep the 100Mbit default). s5-s14 is a real "155 Mbps" GEANT edge
-# scaled to 20Mbit -- added 2026-08-19 specifically to extend achieved-
-# utilization coverage past this VM's generation ceiling (see module
-# docstring). Looked up per-link via topo.get_link_bw_mbps() in main(), not
-# assumed to be a flat constant.
+# Four real, distinct GEANT links (topology.py resolves real bandwidth per link).
+# The first three sit at 100/150Mbit, comfortably above this VM's own iperf UDP
+# generation ceiling (~50-55Mbit/s), so achieved_utilization on them tops out
+# around 0.55 regardless of requested rate. s5-s14 ("155 Mbps" tier, scaled to
+# 20Mbit) gets its own lower rate schedule below so the same generation ceiling
+# reaches real saturation on it, covering the u>0.55 region the other three miss.
 LINKS = [("s1", "s2"), ("s5", "s6"), ("s13", "s35"), ("s5", "s14")]
 
-# Requested send rate in Mbit, not "target utilization fraction" -- see
-# module docstring for why the top two intentionally exceed link capacity.
-# Per-link, because s5-s14's 20Mbit cap needs its own lower schedule --
-# reusing the other three's schedule against it would be pure overshoot at
-# every level and skip the mid-utilization range entirely.
+# Requested send rate in Mbit, not "target utilization fraction". The top two
+# levels per link intentionally exceed real link capacity: the tc/htb shaper is
+# a hard limit, so overshooting it deterministically forces near-saturation
+# utilization (and real, observable loss) regardless of how precisely iperf
+# hits its nominal send rate -- this is what samples the high-utilization region.
 LINK_RATES_MBPS: Dict[Tuple[str, str], List[int]] = {
     ("s1", "s2"): [10, 20, 30, 40, 50, 60, 70, 85, 100, 130],
     ("s5", "s6"): [10, 20, 30, 40, 50, 60, 70, 85, 100, 130],
     ("s13", "s35"): [10, 20, 30, 40, 50, 60, 70, 85, 100, 130],
     ("s5", "s14"): [4, 8, 12, 16, 20, 24, 28, 35, 45, 60],
 }
-# 2 -> 5 trials/level (2026-08-18): the first pass (60 samples, n=20/link) left
-# a real, dCor-significant but unexplained residual signal after the
-# delay-curve refit (dCor=0.36, p=0.009) that survived ruling out both an
-# intercept-identifiability bug and an obvious per-link effect -- see
-# compliance_check.md. More real samples (not another curve tweak) is the
-# next actual lever: this triples n/link (20->50) to check whether that
-# signal is real leftover structure or shrinks toward noise with more power.
+# 5, not the earlier pilot's 2: a smaller pilot left an unexplained dCor-significant
+# residual signal (dCor=0.36, p=0.009); more real samples is the lever to check whether
+# that's real structure or shrinks toward noise.
 TRIALS_PER_LEVEL = 5
 IPERF_DURATION_S = 8
 RANDOM_SEED = 42
@@ -187,6 +134,8 @@ def main() -> None:
         collector = StatisticsCollector(
             output_dir=output_dir, config_path=str(PROJECT_ROOT / "config" / "topology.yaml")
         )
+        # Real tc drop counters, not OVS port drop= -- OVS's counter is structurally
+        # blind to tc/htb shaping drops, which matters most on s5-s14 (expected to saturate).
         qdisc_tracker = QdiscLossTracker()
 
         current_link = None
@@ -254,7 +203,9 @@ def main() -> None:
             su, sv, hu, hv = current_nodes
             clear_single_link_rules(su, sv, hu, hv)
 
-        # --- Analysis: raw and residual dependence, using the numpy toolkit ---
+        # Dependence stats on both raw delay/loss and their residuals against
+        # congestion_model.py's predicted curve -- the residual result doubles as
+        # a calibration check for that curve.
         u_vals = [r["achieved_utilization"] for r in results]
         d_vals = [r["delay_ms"] for r in results]
         l_vals = [r["loss"] for r in results]
@@ -318,7 +269,7 @@ def main() -> None:
             "DecisionEngine reroute events, not raw traffic load -- this experiment only "
             "injects traffic via static OpenFlow rules, no DecisionEngine is running, so "
             "churn stays at 0 throughout. A separate, decision-driven experiment is needed "
-            "for those two variables (see pending task notes).",
+            "for those two variables (see decision_churn_independence.py).",
             "",
             "## Raw samples",
             "",

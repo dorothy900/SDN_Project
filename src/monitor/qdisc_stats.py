@@ -2,20 +2,14 @@
 """
 Qdisc Stats - parse real `tc -s qdisc show` drop counters.
 
-Found 2026-08-12 (results/loss_saturation_check/): OVS's own port counters
-(the `drop=` field StatisticsCollector.calculate_loss_rate() reads from
+OVS's own port counters (the `drop=` field StatisticsCollector reads from
 `ovs-ofctl dump-ports`) do not see packets dropped by tc-netem/htb rate
-shaping -- confirmed live: a 60Mbit burst on a real 20Mbit-capped link showed
-`tc -s qdisc show` reporting 29104 real dropped packets while the OVS port
-counter for the same interface, same moment, read `drop=0`. These are two
-separate accounting layers (OVS's datapath vs. the kernel's queueing
-discipline sitting below it), not two views of the same counter -- the
-`drop=` field is structurally blind to shaping-induced loss, which is
-exactly the mechanism this project's own topology (tc-based bandwidth caps,
-see topology.py/src/monitor/link_capacity.py) produces under congestion.
-
-This module reads the mechanism that actually sees this: `tc`'s own
-per-qdisc "Sent X bytes Y pkt (dropped Z, ...)" line.
+shaping -- OVS's datapath and the kernel's queueing discipline underneath
+it are two separate accounting layers, and `drop=` is structurally blind
+to shaping-induced loss, which is exactly the mechanism this project's
+tc-based bandwidth caps (topology.py / link_capacity.py) produce under
+congestion. This module reads the counter that actually sees it: `tc`'s
+own per-qdisc "Sent X bytes Y pkt (dropped Z, ...)" line.
 """
 from __future__ import annotations
 

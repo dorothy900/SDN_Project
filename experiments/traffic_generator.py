@@ -26,7 +26,7 @@ class FlowDefinition:
 
 
 class TrafficGenerator:
-    """Generate repeatable concurrent traffic mixes for Week 6 experiments."""
+    """Generate repeatable concurrent traffic mixes for pilot experiments."""
 
     def __init__(self, output_dir: Optional[Path] = None):
         self.output_dir = output_dir or Path("results/pilot")
@@ -62,7 +62,7 @@ class TrafficGenerator:
         return timeline
 
     def write_log(self, output_path: Optional[Path] = None) -> Path:
-        """Persist a readable generator log for the Week 6 Day 1 deliverable."""
+        """Persist a readable generator log."""
         log_path = output_path or (self.output_dir / "traffic_generator.log")
         lines = ["Traffic Generator Log", "====================", "Concurrent flows:"]
         for flow in self.generate_concurrent_flows():

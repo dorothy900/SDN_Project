@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-Stale-Statistics Node-Pair Generalization - was this scenario's robustness
-claim ("proposed doesn't falsely reroute on one glitchy sample, and still
-detects a real sustained event despite delayed polls") ever verified beyond
-PRIMARY_PAIR? No -- same gap already found and closed for congestion.py,
-failure_recovery.py and increasing_load.py (see compliance_check.md,
-2026-08-24).
+Stale-Statistics Node-Pair Generalization - generalizes stale_stats.py's
+robustness claim ("proposed doesn't falsely reroute on one glitchy sample,
+and still detects a real sustained event despite delayed polls") from a
+single monitored pair (PRIMARY_PAIR) to the same 23-pair sample used
+across the other generalized scenarios.
 
 Reuses the identical 23-pair sample (`labeled_pairs_23`) drawn for the
 failure/recovery check, so results are directly comparable pair-for-pair

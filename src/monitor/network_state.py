@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Network State - Central network state manager
-Week 2 Day 5: get_network_state() interface for routing modules
+Network State - central network state manager, exposing
+get_network_state() as the shared read interface for routing modules.
 """
 import json
 from datetime import datetime
@@ -62,21 +62,13 @@ class NetworkState:
         """
         Normalized [0.0, 1.0] instability score -- see LinkChurnTracker.
 
-        now defaults to real wall-clock time (LinkChurnTracker.get_churn_score's
-        own default) -- fine for real deployment, where record_link_churn's
-        timestamp= is also normally left to default to real time. But before
-        2026-08-12 this method had no `now` parameter at all, while
-        record_link_churn already accepted an explicit timestamp -- any
-        caller recording churn against a synthetic clock (e.g. an offline
-        experiment using now_s starting from 0, not real time.time()) would
-        record correctly but then always read back 0.0, since the window-
-        eviction check inside LinkChurnTracker.get_churn_score compared that
-        small synthetic timestamp against real wall-clock time and evicted it
-        as (falsely) 60+ seconds stale on every read. Found by
-        experiments/decision_churn_independence.py, which needs exactly this
-        to test delta/epsilon offline the same way the rest of this project's
-        scenario experiments (experiments/*.py) already drive DecisionEngine
-        with a synthetic now_s clock instead of real sleeps.
+        now defaults to real wall-clock time, fine for real deployment. A
+        caller driving DecisionEngine on a synthetic clock (e.g. an offline
+        experiment using now_s starting from 0) must pass that same now_s
+        here -- otherwise the window-eviction check inside
+        LinkChurnTracker.get_churn_score compares a small synthetic
+        timestamp against real wall-clock time and evicts every sample as
+        falsely stale, always reading back 0.0.
         """
         return self.link_churn.get_churn_score(link_id, now=now)
 
@@ -114,21 +106,15 @@ class NetworkState:
                 get_delay_jitter_score's docstring on why this needs to
                 match whatever clock a caller later reads jitter against).
                 Defaults to link_stats.timestamp converted to an epoch
-                float -- correct for real deployment, where both recording
-                and reading naturally use real wall-clock time. An offline
-                experiment driving everything off a synthetic now_s clock
-                (as this project's scenario experiments do -- see
-                experiments/simulation_common.py's set_link_condition)
-                must pass that same now_s here, or every sample gets
-                recorded against real time while later reads use a tiny
-                synthetic value -- the eviction cutoff then never exceeds
-                any real timestamp, so the "rolling window" never actually
-                rolls; it silently accumulates every sample for the whole
-                experiment instead of reflecting only the last
-                window_seconds. (Same root cause as the churn `now`-facade
-                bug fixed 2026-08-12, mirror-imaged: that one made an
-                offline signal always read 0 by over-evicting; this one
-                would make it never evict.)
+                float -- correct for real deployment. An offline experiment
+                driving everything off a synthetic now_s clock (see
+                experiments/simulation_common.py's set_link_condition) must
+                pass that same now_s here, or every sample is recorded
+                against real time while later reads use a tiny synthetic
+                value -- the eviction cutoff then never exceeds any real
+                timestamp, so the rolling window never actually rolls; it
+                silently accumulates every sample for the whole run instead
+                of reflecting only the last window_seconds.
         """
         self.link_monitor.update_link_stats(link_stats)
 
@@ -144,14 +130,12 @@ class NetworkState:
 
         # Feed the jitter tracker with this sample's delay residual, so
         # get_delay_jitter_score() reflects real, current per-link
-        # dispersion (see DelayJitterTracker's docstring for why this
-        # exists) -- but skip samples taken while this link is still within
-        # its post-switch settle window (added 2026-08-19). A switch event
-        # itself can cause a real, transient delay blip that has nothing to
-        # do with steady-state jitter; recording it here would let delta
+        # dispersion -- but skip samples taken while this link is still
+        # within its post-switch settle window: a switch event itself can
+        # cause a real, transient delay blip that has nothing to do with
+        # steady-state jitter, and recording it here would let delta
         # (control-plane churn) and zeta (data-plane jitter) partly
-        # double-count the same underlying reroute event instead of
-        # measuring two genuinely distinct things.
+        # double-count the same underlying reroute event.
         if link_stats.delay_ms is not None or link_stats.packet_loss is not None:
             jitter_now = now if now is not None else link_stats.timestamp.timestamp()
             settling = self.link_churn.has_changed_recently(
@@ -188,9 +172,10 @@ class NetworkState:
     
     def get_network_state(self) -> Dict:
         """
-        Week 2 Day 5: Expose complete network state to routing modules.
-        No need for REST calls - all metrics available locally!
-        
+        Expose complete network state to routing modules, in-process --
+        no REST calls needed since routing and monitoring share this state
+        directly.
+
         Returns:
             Dictionary containing all network state:
             - timestamp: Last update time
@@ -247,10 +232,7 @@ class NetworkState:
         return self.topology.get_active_graph()
     
     def save_state_snapshot(self, filename: str = "network_state_snapshot.json") -> None:
-        """
-        Save current network state snapshot to JSON.
-        Week 2 Day 5 output - print annotated snapshot.
-        """
+        """Save current network state snapshot to JSON."""
         state = self.get_network_state()
         filepath = self.output_dir / filename
         

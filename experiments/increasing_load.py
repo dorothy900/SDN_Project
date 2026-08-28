@@ -45,9 +45,8 @@ class IncreasingLoadScenario:
         src, dst = PRIMARY_PAIR
         # flow-video-1 (24.0 Mbps) is the real flow mapped onto PRIMARY_PAIR
         # (see simulation_common.py's PRIMARY_PAIR comment). Deliberately NOT
-        # setting drivers["proposed"].offered_load_mbps here (2026-08-20) --
-        # see congestion.py's matching comment / compliance_check.md's
-        # "Revoking the offered-load correction" section.
+        # setting drivers["proposed"].offered_load_mbps here -- see
+        # congestion.py's matching comment for the ablation and rationale.
         drivers = make_drivers(state, src, dst, threshold=0.7, persistence_required_samples=3)
         hotspot_link = link_id(drivers["static"].path[0], drivers["static"].path[1])
 

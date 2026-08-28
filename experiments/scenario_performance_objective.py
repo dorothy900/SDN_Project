@@ -182,12 +182,12 @@ def operational_cost_report(weights: Sequence[float], seeds: Sequence[int] = (11
     Reroute *operational cost* (flow-table rule installs, reroute event
     count) for proposed vs dynamic -- a dimension DIRECT's search on
     mean_relative_improvement (delay/throughput/loss) cannot see or
-    optimize, added 2026-08-20 after that search confirmed weight tuning
-    alone cannot close the delay/throughput/loss gap (dynamic wins there
-    by design -- it reacts with zero caution, so persistence's reaction
-    lag, not the cost weights, is what proposed trails on). Real question
-    this answers instead: does proposed's stability machinery actually
-    prevent some of dynamic's reroutes, at a real operational cost saved
+    optimize, since weight tuning alone cannot close that gap (dynamic
+    wins there by design -- it reacts with zero caution, so persistence's
+    reaction lag, not the cost weights, is what proposed trails on). Real
+    question this answers instead: does proposed's stability machinery
+    actually prevent some of dynamic's reroutes, at a real operational
+    cost saved
     (fewer OpenFlow rule installs), even though it doesn't win on delay?
 
     IMPORTANT: `flow_updates`/`reroute` in each scenario's CSV are written

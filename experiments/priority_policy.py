@@ -21,9 +21,9 @@ not a real comparison. This scenario's actual claim is narrower than the
 other four's: not "proposed beats the baselines," but "within proposed,
 policy-marked classes (VoIP/Video) really do react no later than unmarked
 ones (Web/File Transfer)," verified against the real per-class config, not
-hardcoded. See this session's scenario design audit (finding F5) for the
-gap this leaves: no scenario in this project measures whether adding
-per-class awareness to a baseline would change this picture, because
+hardcoded. Known gap this leaves: no scenario in this project measures
+whether adding per-class awareness to a baseline would change this
+picture, because
 neither baseline has one to add.
 """
 
@@ -89,9 +89,8 @@ class PriorityPolicyScenario:
         hotspot_link = link_id(paths[flows[0].service_type][0], paths[flows[0].service_type][1])
         # All 4 classes share this same physical path (see module docstring),
         # each through its own DecisionEngine. Deliberately NOT passing
-        # offered_load_mbps into evaluate_service_congestion below (2026-08-20)
-        # -- see congestion.py's matching comment / compliance_check.md's
-        # "Revoking the offered-load correction" section.
+        # offered_load_mbps into evaluate_service_congestion below -- see
+        # congestion.py's matching comment for the ablation and rationale.
         first_reroute_sample: Dict[str, Optional[int]] = {flow.service_type: None for flow in flows}
         rows: List[Dict[str, object]] = []
 
