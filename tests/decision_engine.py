@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from experiments.simulation_common import PRIMARY_PAIR, build_network_state, link_id, set_link_condition
 from src.decision.decision_engine import DecisionEngine
 from src.decision.threshold_detector import ThresholdViolation
@@ -147,3 +149,35 @@ def test_priority_service_skips_persistence_low_priority_does_not(tmp_path):
         service_type="File Transfer", now=0.0,
     )
     assert file_transfer_action is None
+
+
+def test_resilience_avoid_threshold_routes_around_a_flapping_link(tmp_path):
+    """
+    End-to-end demonstration through the real DecisionEngine/PathCost/GraphBuilder
+    path (not just GraphBuilder directly, see tests/graph_builder.py's unit tests):
+    a link that's flapped enough times to saturate its resilience score gets
+    structurally excluded from find_best_path()'s candidates once
+    resilience_avoid_threshold is enabled, with no other condition (cost, status)
+    changed -- disabled (the default), the same flapping link is still selected.
+    """
+    engine, state, src, dst, current_path, _candidate_path = _make_engine(tmp_path)
+    hotspot_link = link_id(current_path[0], current_path[1])
+    assert engine.path_cost.find_best_path(src, dst) == current_path
+
+    # 4 real up/down transitions 1s apart, ending "up" -- well past LinkFlapTracker's
+    # RFC-2439-style suppress_threshold (2 flaps already crosses it at these defaults),
+    # and deliberately ending in a state the ordinary active-graph down-link exclusion
+    # would never remove on its own.
+    now = 1000.0
+    for i, is_up in enumerate([False, True, False, True]):
+        state.set_link_status(hotspot_link, is_up=is_up, now=now + i)
+
+    # Disabled (default): the flapping link is still the cheapest, still selected.
+    assert engine.path_cost.find_best_path(src, dst, now=now + 10) == current_path
+
+    # Enabled: the same flapping link is now structurally excluded.
+    engine.path_cost.graph_builder.resilience_avoid_threshold = 0.7
+    path_with_avoidance = engine.path_cost.find_best_path(src, dst, now=now + 10)
+    if path_with_avoidance is None:
+        pytest.skip("no alternate path exists around this pair's hotspot link in the real GEANT topology")
+    assert link_id(path_with_avoidance[0], path_with_avoidance[1]) != hotspot_link

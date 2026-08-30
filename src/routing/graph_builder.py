@@ -25,7 +25,10 @@ class GraphBuilder:
     # keeps that design safe regardless of how any curve is calibrated.
     MIN_EDGE_COST = 0.001
 
-    def __init__(self, network_state: NetworkState, weights: Optional[Dict[str, float]] = None):
+    def __init__(
+        self, network_state: NetworkState, weights: Optional[Dict[str, float]] = None,
+        resilience_avoid_threshold: Optional[float] = None,
+    ):
         self.network_state = network_state
         self.weights = weights or {
             "alpha": 0.4,
@@ -36,6 +39,16 @@ class GraphBuilder:
             "zeta": 0.05,
             "eta": 0.05,
         }
+        # Structural avoidance for links with a real resilience anomaly (flapping,
+        # sustained abnormal loss, abnormal traffic growth -- see
+        # NetworkState.get_resilience_score), independent of the alpha..eta cost
+        # formula above: an edge whose resilience_score exceeds this is removed from
+        # the graph entirely, the same way NetworkState.get_active_graph() already
+        # removes genuinely down links, rather than merely priced higher. None
+        # (default) disables the filter -- every existing test/experiment builds a
+        # NetworkState whose links never accumulate a nonzero resilience_score, so
+        # this only changes behavior for a caller that opts in.
+        self.resilience_avoid_threshold = resilience_avoid_threshold
 
     def build_weighted_graph(self, now: Optional[float] = None) -> nx.Graph:
         """
@@ -50,6 +63,14 @@ class GraphBuilder:
         that clock instead of silently defaulting to real wall-clock time.
         """
         graph = self.network_state.get_active_graph()
+
+        if self.resilience_avoid_threshold is not None:
+            unresilient_edges = [
+                (u, v) for u, v in graph.edges()
+                if self.network_state.get_resilience_score(self._get_link_id(u, v), now=now)
+                >= self.resilience_avoid_threshold
+            ]
+            graph.remove_edges_from(unresilient_edges)
 
         for u, v in sorted(graph.edges(), key=self._canonical_edge):
             link_id = self._get_link_id(u, v)

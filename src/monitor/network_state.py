@@ -12,6 +12,7 @@ from .link_monitor import LinkMonitor
 from .topology_state import TopologyState
 from .history_store import HistoryStore
 from .link_churn_tracker import LinkChurnTracker
+from .link_flap_tracker import LinkFlapTracker
 from .delay_jitter_tracker import DelayJitterTracker
 from .loss_jitter_tracker import LossJitterTracker
 from .models import LinkStatistics
@@ -38,6 +39,7 @@ class NetworkState:
         self.link_monitor = LinkMonitor(output_dir=output_dir)
         self.history = HistoryStore(window_size=history_window_size, output_dir=output_dir)
         self.link_churn = LinkChurnTracker()
+        self.link_flap = LinkFlapTracker()
         self.delay_jitter = DelayJitterTracker()
         self.loss_jitter = LossJitterTracker()
         # How long after a link was last churned (added to/removed from an
@@ -95,6 +97,33 @@ class NetworkState:
     def get_loss_jitter_score(self, link_id: str, now: Optional[float] = None) -> float:
         """Normalized [0.0, 1.0] instability score -- see LossJitterTracker."""
         return self.loss_jitter.get_jitter_score(link_id, now=now)
+
+    def get_link_flap_score(self, link_id: str, now: Optional[float] = None) -> float:
+        """Normalized [0.0, 1.0] real up/down flapping score -- see LinkFlapTracker."""
+        return self.link_flap.get_flap_score(link_id, now=now)
+
+    def get_abnormal_loss_score(self, link_id: str, now: Optional[float] = None) -> float:
+        """Normalized [0.0, 1.0] sustained-high-loss score -- see LossJitterTracker.get_abnormal_loss_score."""
+        return self.loss_jitter.get_abnormal_loss_score(link_id, now=now)
+
+    def get_traffic_growth_score(self, link_id: str) -> float:
+        """Normalized [0.0, 1.0] abnormal-traffic-growth score -- see LinkHistory.traffic_growth_score."""
+        return self.history.get_or_create_history(link_id).traffic_growth_score
+
+    def get_resilience_score(self, link_id: str, now: Optional[float] = None) -> float:
+        """
+        Normalized [0.0, 1.0] combined resilience/anomaly score: the worst of flapping,
+        sustained abnormal loss, and abnormal traffic growth -- max, not sum, so multiple
+        simultaneous signals don't over-penalize past what any one of them alone already
+        means ("avoid this link"). Independent of the alpha..eta path-cost formula (see
+        GraphBuilder.build_weighted_graph's resilience-avoidance filter) -- this is a
+        structural avoidance signal, not another cost-formula term.
+        """
+        return max(
+            self.get_link_flap_score(link_id, now=now),
+            self.get_abnormal_loss_score(link_id, now=now),
+            self.get_traffic_growth_score(link_id),
+        )
 
     def update_link_statistics(self, link_stats: LinkStatistics, now: Optional[float] = None) -> None:
         """
@@ -154,17 +183,27 @@ class NetworkState:
 
         self.last_update_time = link_stats.timestamp
     
-    def set_link_status(self, link_id: str, is_up: bool) -> None:
+    def set_link_status(self, link_id: str, is_up: bool, now: Optional[float] = None) -> None:
         """
         Explicitly set a link's status (up/down).
-        
+
         Args:
             link_id: Link identifier (e.g., "s1-s2")
             is_up: True for up, False for down
+            now: clock value for the flap tracker (see get_delay_jitter_score's docstring on
+                why a synthetic-clock caller must pass its own now_s here). Defaults to real
+                wall-clock time.
         """
         status = "up" if is_up else "down"
+        # A real transition, not the link's first-ever status report -- get_link_flap_score
+        # should only count actual flaps, and every link's very first observation would
+        # otherwise register as a spurious "recovery" or "failure" against nothing.
+        previous_status = self.link_monitor.get_link_status(link_id)
+        if previous_status is not None and previous_status != status:
+            self.link_flap.record_transition(link_id, now=now)
+
         self.link_monitor.set_link_status(link_id, status)
-        
+
         # Also update topology graph if needed
         if "-" in link_id:
             u, v = link_id.split("-", 1)

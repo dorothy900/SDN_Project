@@ -17,7 +17,10 @@ from ..routing.graph_builder import GraphBuilder
 class PathCost:
     """Calculate and compare path costs."""
 
-    def __init__(self, network_state: NetworkState, weights: Optional[Dict] = None):
+    def __init__(
+        self, network_state: NetworkState, weights: Optional[Dict] = None,
+        resilience_avoid_threshold: Optional[float] = None,
+    ):
         self.network_state = network_state
         self.weights = weights or {
             'alpha': 0.4,
@@ -28,7 +31,9 @@ class PathCost:
             'zeta': 0.05,
             'eta': 0.05,
         }
-        self.graph_builder = GraphBuilder(network_state, weights)
+        self.graph_builder = GraphBuilder(
+            network_state, weights, resilience_avoid_threshold=resilience_avoid_threshold
+        )
 
     def calculate_path_cost(
         self,

@@ -61,7 +61,16 @@ class DecisionEngine:
             burst_allowance=budget_config.get('burst_allowance', 3)
         )
 
-        self.path_cost = PathCost(network_state, config.get('path_cost_weights', {}))
+        resilience_config = config.get('resilience_avoidance', {})
+        resilience_avoid_threshold = (
+            float(resilience_config['avoid_threshold'])
+            if resilience_config.get('enabled', False)
+            else None
+        )
+        self.path_cost = PathCost(
+            network_state, config.get('path_cost_weights', {}),
+            resilience_avoid_threshold=resilience_avoid_threshold,
+        )
 
         self.min_improvement = config.get('minimum_improvement', {})
         self.hold_down = config.get('hold_down', {})

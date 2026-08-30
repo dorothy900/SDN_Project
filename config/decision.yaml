@@ -46,6 +46,38 @@ hold_down:
 recovery:
   window_seconds: 5
 
+resilience_avoidance:
+  # Structural avoidance for links with a real resilience anomaly (flapping,
+  # sustained abnormal loss, abnormal traffic growth -- see
+  # NetworkState.get_resilience_score). Disabled by default: no existing
+  # scenario's links ever accumulate a nonzero resilience_score, so this
+  # only changes behavior for a caller/scenario that explicitly enables it.
+  #
+  # The 3 underlying signals are grounded, not hand-picked: flapping follows
+  # RFC 2439's BGP route flap damping shape (exponential-decay penalty +
+  # suppress/reuse hysteresis, rescaled from BGP's minutes-scale defaults to
+  # this project's seconds-scale stability timers -- see
+  # LinkFlapTracker's docstring); abnormal loss / traffic growth both use
+  # 3-sigma shift detection (Shewhart-control-chart convention, standard in
+  # network anomaly detection -- see LossJitterTracker.get_abnormal_loss_score
+  # and LinkHistory.traffic_growth_score). avoid_threshold itself (how much
+  # of that already-principled [0,1] score counts as "avoid this link") is
+  # now also data-driven rather than hand-picked: experiments/resilience_
+  # sensitivity.py runs a ROC / Youden's-J search (standard threshold-
+  # selection methodology for a labeled detector score, e.g. PMC2749250;
+  # mirrors how SDN link-failure literature separates failure-free vs
+  # broken parameter distributions before picking a trip point, e.g. IEEE
+  # 9531440) over randomized synthetic instances of "genuinely flapping" vs
+  # "one legitimate transition". At half_life_seconds=20 (LinkFlapTracker's
+  # own default), Youden's J is maximized (J=1.0, TPR=1.0, FPR=0.0 -- perfect
+  # separation) across threshold in [0.50, 0.64]; 0.57 is that plateau's
+  # midpoint, chosen over either edge for robustness to model misspecification
+  # rather than sitting exactly on the boundary. Still synthetic ground
+  # truth, not independently validated against real hardware traffic -- see
+  # resilience_sensitivity.py's own module docstring for that same caveat.
+  enabled: false
+  avoid_threshold: 0.57
+
 path_cost_weights:
   alpha: 0.4
   beta: 0.3

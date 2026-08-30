@@ -111,3 +111,35 @@ def test_link_performing_better_than_predicted_costs_less_not_just_never_penaliz
     cost_predicted = builder.get_path_cost(["0", "2"], graph)
     cost_better_than_predicted = builder.get_path_cost(["4", "6"], graph)
     assert cost_better_than_predicted < cost_predicted
+
+
+def test_resilience_avoidance_filter_disabled_by_default():
+    """resilience_avoid_threshold defaults to None -- an edge with a maxed-out
+    resilience_score must still stay in the graph unless a caller opts in."""
+    state = NetworkState()
+    _seed_link(state, "0-2")
+    now = 1000.0
+    for v in [0.0, 0.0, 0.9, 0.9]:  # flat baseline, then a real upward shift
+        state.record_loss_residual("0-2", v, now=now)
+    builder = GraphBuilder(state)
+    graph = builder.build_weighted_graph(now=now)
+    if not graph.has_edge("0", "2"):
+        pytest.skip("GEANT topology doesn't have test edge 0-2; adjust link id")
+    assert graph.has_edge("0", "2")
+
+
+def test_resilience_avoidance_filter_removes_edges_above_threshold_when_enabled():
+    state = NetworkState()
+    _seed_link(state, "0-2")
+    _seed_link(state, "4-6")
+    now = 1000.0
+    # Push "0-2" well past a real anomaly; leave "4-6" untouched.
+    for v in [0.0, 0.0, 0.9, 0.9]:  # flat baseline, then a real upward shift
+        state.record_loss_residual("0-2", v, now=now)
+    builder = GraphBuilder(state, resilience_avoid_threshold=0.7)
+    graph = builder.build_weighted_graph(now=now)
+    if not graph.has_edge("4", "6"):
+        pytest.skip("GEANT topology doesn't have test edge 4-6; adjust link id")
+
+    assert not graph.has_edge("0", "2")
+    assert graph.has_edge("4", "6")

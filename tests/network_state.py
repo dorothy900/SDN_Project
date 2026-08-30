@@ -14,6 +14,8 @@ LinkChurnTracker directly, bypassing NetworkState's facade entirely.
 """
 from datetime import datetime
 
+import pytest
+
 from src.monitor.network_state import NetworkState
 from src.monitor.models import LinkStatistics
 from src.routing.congestion_model import predicted_delay_ms, predicted_loss
@@ -138,3 +140,69 @@ def test_update_link_statistics_feeds_the_loss_jitter_tracker_automatically():
             )
         )
     assert state.get_loss_jitter_score("0-2", now=ts.timestamp()) > 0.0
+
+
+def test_set_link_status_first_report_is_not_a_flap():
+    """A link's very first status observation has nothing to flap from."""
+    state = NetworkState()
+    state.set_link_status("0-2", is_up=False, now=100.0)
+    assert state.get_link_flap_score("0-2", now=100.0) == 0.0
+
+
+def test_set_link_status_real_transitions_are_flaps():
+    state = NetworkState()
+    state.set_link_status("0-2", is_up=True, now=0.0)   # first report, not a flap
+    state.set_link_status("0-2", is_up=False, now=10.0)  # down: 1 flap
+    state.set_link_status("0-2", is_up=True, now=20.0)   # back up: 2nd flap
+    assert state.get_link_flap_score("0-2", now=20.0) > 0.0
+
+
+def test_set_link_status_repeating_the_same_status_is_not_a_flap():
+    state = NetworkState()
+    state.set_link_status("0-2", is_up=False, now=0.0)
+    state.set_link_status("0-2", is_up=False, now=10.0)  # already down -- not a real transition
+    assert state.get_link_flap_score("0-2", now=10.0) == 0.0
+
+
+def test_abnormal_loss_score_visible_through_network_state_facade():
+    state = NetworkState()
+    now = 1000.0
+    for v in [0.0, 0.0, 0.2, 0.2]:  # flat baseline, then a real upward shift
+        state.record_loss_residual("0-2", v, now=now)
+    assert state.get_abnormal_loss_score("0-2", now=now) > 0.0
+
+
+def test_traffic_growth_score_visible_through_network_state_facade():
+    state = NetworkState()
+    ts = datetime(2026, 8, 19, 12, 0, 0)
+    # 10 samples ramping tx_mbps from 5 to 50 -- a real, sustained growth pattern.
+    for i in range(10):
+        state.update_link_statistics(
+            LinkStatistics(
+                timestamp=ts, link_id="0-2", utilization=0.3,
+                rx_mbps=10.0, tx_mbps=5.0 + i * 5.0,
+            )
+        )
+    assert state.get_traffic_growth_score("0-2") > 0.0
+
+
+def test_resilience_score_is_zero_when_nothing_is_anomalous():
+    state = NetworkState()
+    assert state.get_resilience_score("0-2", now=1000.0) == 0.0
+
+
+def test_resilience_score_is_the_max_of_its_components_not_their_sum():
+    """Two simultaneous signals shouldn't stack past what either alone already means."""
+    state = NetworkState()
+    now = 1000.0
+    for v in [0.0, 0.0, 0.2, 0.2]:  # flat baseline, then a real upward shift
+        state.record_loss_residual("0-2", v, now=now)
+    abnormal_loss_alone = state.get_abnormal_loss_score("0-2", now=now)
+
+    state.set_link_status("0-2", is_up=True, now=now - 20.0)
+    state.set_link_status("0-2", is_up=False, now=now - 10.0)
+    state.set_link_status("0-2", is_up=True, now=now)
+
+    combined = state.get_resilience_score("0-2", now=now)
+    assert combined == pytest.approx(max(abnormal_loss_alone, state.get_link_flap_score("0-2", now=now)))
+    assert combined <= 1.0

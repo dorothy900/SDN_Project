@@ -354,6 +354,7 @@ class ProposedDriver:
         utilization_threshold: Optional[float] = None,
         offered_load_mbps: Optional[float] = None,
         service_type: Optional[str] = None,
+        resilience_avoid_threshold: Optional[float] = None,
     ):
         self.state = state
         self.src, self.dst = src, dst
@@ -389,6 +390,11 @@ class ProposedDriver:
             self.engine.threshold_detector.thresholds["utilization"] = utilization_threshold
             self.engine.stability.enter_threshold = utilization_threshold
             self.engine.stability.release_threshold = max(0.0, utilization_threshold - 0.05)
+        if resilience_avoid_threshold is not None:
+            # Same override pattern as utilization_threshold above -- lets a caller enable
+            # resilience avoidance without needing a custom decision.yaml. None (default)
+            # preserves config/decision.yaml's own resilience_avoidance.enabled setting.
+            self.engine.path_cost.graph_builder.resilience_avoid_threshold = resilience_avoid_threshold
 
         self.path = list(initial_path) if initial_path else self.engine.path_cost.find_best_path(src, dst)
         pair = (src, dst)
@@ -489,6 +495,7 @@ def make_drivers(
     persistence_required_samples: Optional[int] = None,
     offered_load_mbps: Optional[float] = None,
     service_type: Optional[str] = None,
+    resilience_avoid_threshold: Optional[float] = None,
 ) -> Dict[str, object]:
     """
     Construct one driver per algorithm sharing the same seeded NetworkState,
@@ -503,6 +510,13 @@ def make_drivers(
     forwarded to ProposedDriver only (static/dynamic don't go through
     PathCost.compare_paths' asymmetric old/new costing). None (default)
     preserves every existing caller's behavior exactly.
+
+    resilience_avoid_threshold: opt-in structural avoidance of links with a
+    real resilience anomaly (see NetworkState.get_resilience_score) --
+    forwarded to ProposedDriver only, same as offered_load_mbps above.
+    Deliberately not given to dynamic: resilience awareness is a proposed-
+    only stability mechanism, the same way persistence/hysteresis are --
+    dynamic stays the naive, gate-free baseline throughout.
     """
     initial_path = GraphBuilder(state).get_candidate_paths(src, dst, max_paths=1)
     initial_path = initial_path[0] if initial_path else StaticShortestPath(state.get_active_graph()).compute_path(src, dst)
@@ -518,5 +532,6 @@ def make_drivers(
             utilization_threshold=threshold,
             offered_load_mbps=offered_load_mbps,
             service_type=service_type,
+            resilience_avoid_threshold=resilience_avoid_threshold,
         ),
     }
