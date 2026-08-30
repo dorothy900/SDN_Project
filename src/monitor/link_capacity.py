@@ -18,7 +18,7 @@ actually saturate.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 REAL_LINK_LABEL_TO_MBPS = {
     "155 Mbps": 20,
@@ -60,6 +60,21 @@ def _load_geant_graph():
         graph.remove_edges_from(nx.selfloop_edges(graph))
         _geant_graph_cache = graph
     return _geant_graph_cache
+
+
+def build_node_mapping() -> Dict[str, Tuple[str, str]]:
+    """
+    graph_node_id -> (switch_name, host_name), matching Mininet's default dpid
+    assignment (dpid == the switch name's own numeric suffix, e.g. "s13" -> dpid
+    13) exactly. The single source of truth topology.py's real build() and any
+    RYU app translating a live datapath.id back to a GEANT node id must both
+    use -- so they can never independently drift apart, which is exactly how
+    the "38/40 nodes mismatch" FlowInstaller's docstring warns about happened
+    in the first place (two separate re-derivations of this same mapping).
+    """
+    graph = _load_geant_graph()
+    sorted_nodes = sorted(graph.nodes(), key=str)
+    return {str(node): (f"s{i}", f"h{i}") for i, node in enumerate(sorted_nodes, start=1)}
 
 
 def resolve_link_capacity_mbps(link_id_str: str, default_mbps: float = 100.0) -> float:

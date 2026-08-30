@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.monitor.link_capacity import resolve_link_bw_mbps
+from src.monitor.link_capacity import build_node_mapping, resolve_link_bw_mbps
 
 
 class GeantTopology(Topo):
@@ -38,15 +38,28 @@ class GeantTopology(Topo):
         graph = nx.Graph(original_graph)
         graph.remove_edges_from(nx.selfloop_edges(graph))
 
-        sorted_nodes = sorted(graph.nodes(), key=str)
+        # link_capacity.build_node_mapping() is the single source of truth for this
+        # exact sorted-node-order / "s{i}"/"h{i}" naming -- a RYU app translating a
+        # live datapath.id back to a GEANT node id must compute the identical mapping
+        # without importing mininet at all, so both share this one function instead of
+        # separately re-deriving it (see build_node_mapping's own docstring for why
+        # that drifting apart is a real, previously-hit bug, not a hypothetical one).
+        # Only valid for the default graphml_path -- build_node_mapping() always reads
+        # data/Geant2012.graphml internally, so a caller overriding graphml_path here
+        # falls back to deriving the mapping locally instead.
+        if str(self.graphml_path) == "data/Geant2012.graphml":
+            self.node_mapping = dict(build_node_mapping())
+        else:
+            self.node_mapping = {
+                str(node): (f"s{i}", f"h{i}")
+                for i, node in enumerate(sorted(graph.nodes(), key=str), start=1)
+            }
 
-        for i, node in enumerate(sorted_nodes, start=1):
-            switch_name = f"s{i}"
-            host_name = f"h{i}"
+        for node, (switch_name, host_name) in self.node_mapping.items():
+            i = switch_name[1:]
             self.addSwitch(switch_name, protocols="OpenFlow13")
             self.addHost(host_name, ip=f"10.0.0.{i}/24")
             self.addLink(host_name, switch_name, bw=self.link_bw_mbps, delay="1ms")
-            self.node_mapping[str(node)] = (switch_name, host_name)
 
         for u, v in graph.edges():
             su, _ = self.node_mapping[str(u)]
