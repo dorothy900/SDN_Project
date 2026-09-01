@@ -62,14 +62,17 @@ class DecisionEngine:
         )
 
         resilience_config = config.get('resilience_avoidance', {})
+        resilience_enabled = resilience_config.get('enabled', False)
         resilience_avoid_threshold = (
-            float(resilience_config['avoid_threshold'])
-            if resilience_config.get('enabled', False)
-            else None
+            float(resilience_config['avoid_threshold']) if resilience_enabled else None
+        )
+        resilience_persist_seconds = (
+            float(resilience_config.get('persist_seconds', 0.0)) if resilience_enabled else 0.0
         )
         self.path_cost = PathCost(
             network_state, config.get('path_cost_weights', {}),
             resilience_avoid_threshold=resilience_avoid_threshold,
+            resilience_persist_seconds=resilience_persist_seconds,
         )
 
         self.min_improvement = config.get('minimum_improvement', {})
@@ -319,6 +322,69 @@ class DecisionEngine:
             emergency=True,
             now=now,
             offered_load_mbps=offered_load_mbps,
+        )
+
+    def evaluate_resilience_avoidance(
+        self,
+        src: str,
+        dst: str,
+        current_path: List[str],
+        now: Optional[float] = None,
+    ) -> Optional[dict]:
+        """
+        Move a flow off a link the resilience gate has latched as anomalous
+        (flapping or abnormal loss), even when that link is not congested and
+        nothing has failed -- the case an ordinary threshold-driven reroute
+        never sees, and the reason the gate needs its own trigger to work in a
+        live deployment.
+
+        Only fires when the current path actually uses a gated link and
+        find_best_path (which is resilience_effective_graph, so it already
+        encodes the gate's suppress/reuse hysteresis, persistence delay, and
+        the P4 bounded-detour give-up) offers an alternative that itself uses
+        no gated link.
+
+        Treated as an emergency reroute with NO offered-load correction: a
+        gated link is a soft failure, so the intent is "get off it", not
+        "reroute only if it's clearly worth it net of our own load" -- the
+        gate's own timers are the damping, and the P4 cap already refuses a
+        pathologically long detour. The offered-load correction is a
+        safety-first check for marginal *congestion* switch-backs; applying it
+        here just strands the flow on a bad link behind a longer safe detour.
+        """
+        gb = self.path_cost.graph_builder
+        if gb._resilience_gate is None or len(current_path) < 2:
+            return None
+        # Tick the gate: it only advances its persistence/hysteresis state
+        # inside a graph build, and .step() only builds a graph when it is
+        # already considering a congestion reroute -- so without this a
+        # purely-degrading (uncongested) link would never latch, and this
+        # check would be a permanent no-op. Called every step; cheap and
+        # idempotent for an unchanged score at a fixed `now`.
+        gb.build_weighted_graph(now=now)
+        current_links = {self._link_id(u, v) for u, v in zip(current_path, current_path[1:])}
+        if not any(gb._resilience_gate.is_avoided(lid) for lid in current_links):
+            return None
+
+        candidate = self.path_cost.find_best_path(src, dst, now=now)
+        if not candidate or candidate == current_path:
+            return None
+        candidate_links = {self._link_id(u, v) for u, v in zip(candidate, candidate[1:])}
+        if any(gb._resilience_gate.is_avoided(lid) for lid in candidate_links):
+            return None  # the alternative is no better resilience-wise -- leave it
+
+        pair = (src, dst)
+        self.current_paths[pair] = list(current_path)
+        return self._execute_reroute(
+            pair=pair,
+            current_path=current_path,
+            candidate_path=candidate,
+            reason="resilience:avoid_gated_link",
+            affected_links=sorted(current_links - candidate_links),
+            stability_used=["resilience_gate"],
+            emergency=True,
+            now=now,
+            offered_load_mbps=None,
         )
 
     def begin_recovery_watch(

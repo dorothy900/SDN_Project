@@ -20,6 +20,7 @@ class PathCost:
     def __init__(
         self, network_state: NetworkState, weights: Optional[Dict] = None,
         resilience_avoid_threshold: Optional[float] = None,
+        resilience_persist_seconds: float = 0.0,
     ):
         self.network_state = network_state
         self.weights = weights or {
@@ -32,7 +33,9 @@ class PathCost:
             'eta': 0.05,
         }
         self.graph_builder = GraphBuilder(
-            network_state, weights, resilience_avoid_threshold=resilience_avoid_threshold
+            network_state, weights,
+            resilience_avoid_threshold=resilience_avoid_threshold,
+            resilience_persist_seconds=resilience_persist_seconds,
         )
 
     def calculate_path_cost(
@@ -149,7 +152,7 @@ class PathCost:
     def find_best_path(self, src: str, dst: str, now: Optional[float] = None) -> Optional[List[str]]:
         """Find lowest cost path between two nodes."""
         try:
-            graph = self.graph_builder.build_weighted_graph(now=now)
+            graph = self.graph_builder.resilience_effective_graph(src, dst, now=now)
             if not (graph.has_node(src) and graph.has_node(dst)):
                 return None
             return nx.shortest_path(graph, source=src, target=dst, weight='weight')

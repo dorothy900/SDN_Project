@@ -164,6 +164,37 @@ def test_set_link_status_repeating_the_same_status_is_not_a_flap():
     assert state.get_link_flap_score("0-2", now=10.0) == 0.0
 
 
+def test_correlated_flap_burst_is_discounted():
+    """Many links transitioning together inside one poll is a controller-view
+    artefact, not that many real failures -- each transition is recorded at a
+    reduced weight, so no single link in the burst gets pushed to a
+    resilience-avoidance level on the strength of the burst alone."""
+    burst = NetworkState()
+    isolated = NetworkState()
+    for lid in ("0-1", "0-2", "0-3", "0-4", "0-5"):  # >= CORRELATED_FLAP_MIN_LINKS
+        burst.set_link_status(lid, is_up=True, now=0.0)
+        burst.set_link_status(lid, is_up=False, now=1.0)   # all flap in the same poll
+    isolated.set_link_status("0-1", is_up=True, now=0.0)
+    isolated.set_link_status("0-1", is_up=False, now=1.0)  # one link, alone
+
+    assert burst.get_link_flap_score("0-1", now=1.0) < isolated.get_link_flap_score("0-1", now=1.0)
+
+
+def test_a_single_link_flapping_repeatedly_is_not_discounted():
+    """The discount keys off *many links at once*, not one link flapping fast --
+    a genuinely unstable single link must still accumulate full penalty."""
+    solo = NetworkState()
+    solo.set_link_status("0-2", is_up=True, now=0.0)
+    for i, up in enumerate([False, True, False, True], start=1):
+        solo.set_link_status("0-2", is_up=up, now=float(i))
+    ref = NetworkState()
+    ref.set_link_status("0-2", is_up=True, now=0.0)
+    for i, up in enumerate([False, True, False, True], start=1):
+        ref.set_link_status("0-2", is_up=up, now=float(i))
+    assert solo.get_link_flap_score("0-2", now=4.0) == ref.get_link_flap_score("0-2", now=4.0)
+    assert solo.get_link_flap_score("0-2", now=4.0) > 0.5
+
+
 def test_abnormal_loss_score_visible_through_network_state_facade():
     state = NetworkState()
     now = 1000.0
@@ -189,6 +220,31 @@ def test_traffic_growth_score_visible_through_network_state_facade():
 def test_resilience_score_is_zero_when_nothing_is_anomalous():
     state = NetworkState()
     assert state.get_resilience_score("0-2", now=1000.0) == 0.0
+
+
+def test_honestly_congested_link_is_not_a_resilience_anomaly():
+    """abnormal_loss_score keys off a shift in the loss *residual* (actual minus
+    utilization-predicted), so a link that is genuinely, heavily congested --
+    high loss, but exactly the loss its own utilisation predicts -- must NOT
+    read as a resilience anomaly. De-ranking that link is the alpha term's job;
+    letting the gate also fire on it would wrongly structurally avoid a link the
+    cost formula is already handling correctly (false positive)."""
+    from src.routing.congestion_model import predicted_delay_ms, predicted_loss
+
+    state = NetworkState()
+    ts = datetime(2026, 9, 1, 12, 0, 0)
+    for i in range(10):
+        util = 0.30 if i < 5 else 0.95  # a real jump into heavy congestion
+        state.update_link_statistics(
+            LinkStatistics(
+                timestamp=ts, link_id="0-2", utilization=util,
+                rx_mbps=10.0, tx_mbps=10.0, status="up",
+                delay_ms=predicted_delay_ms(util), packet_loss=predicted_loss(util),
+            ),
+            now=1000.0 + i,
+        )
+    assert state.get_abnormal_loss_score("0-2", now=1009.0) == 0.0
+    assert state.get_resilience_score("0-2", now=1009.0) == 0.0
 
 
 def test_resilience_score_is_the_max_of_its_components_not_their_sum():

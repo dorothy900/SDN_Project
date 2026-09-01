@@ -18,6 +18,13 @@ synthetic set_link_condition() calls, with its path changes shadowed into
 real OFPFlowMod pushes instead of its own offline FlowInstaller's no-op
 text-only output.
 
+Link up/down: EventLinkAdd/EventLinkDelete (LLDP) and EventOFPPortStatus
+(switch-reported) all feed NetworkState.set_link_status(), so the resilience
+layer's flap signal + correlated-flap discount actually fire in the live
+deployment, not only under the offline harness. The decision loop runs on
+wall-clock time() so those async events and the driver's decay timers share
+one clock.
+
 HOST_PORT=1 (every switch's host-facing port): not guessed -- topology.py's
 build() always adds the host link first for each switch, and Mininet
 assigns ports in link-creation order; empirically confirmed against the
@@ -35,6 +42,7 @@ something this app needs to solve. Run with --observe-links:
     ryu-manager --observe-links scripts/ryu_apps/stability_aware_te.py
 """
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -159,6 +167,63 @@ class StabilityAwareTE(app_manager.RyuApp):
                 link.src.dpid, link.src.port_no, link.dst.dpid, link.dst.port_no,
                 _link_id(src_node, dst_node),
             )
+            # Feed the transition into NetworkState. The link's first-ever
+            # EventLinkAdd is a no-op flap-wise (set_link_status skips the
+            # first observation); a later one -- LLDP re-discovering the link
+            # after an EventLinkDelete -- registers a real "up" transition,
+            # which is what LinkFlapTracker and the correlated-flap discount
+            # need to see. Wall-clock, matching _decision_loop's own clock.
+            self.state.set_link_status(_link_id(src_node, dst_node), is_up=True)
+
+    @set_ev_cls(topo_event.EventLinkDelete)
+    def _link_delete_handler(self, ev):
+        """
+        LLDP stopped seeing this link -- feed a real "down" transition into
+        NetworkState so it drops out of get_active_graph() and the flap tracker
+        counts it. Paired with EventLinkAdd's "up" above; the two are what make
+        the resilience layer's flap signal actually fire in the live deployment
+        (it was previously only exercised by the offline set_link_condition
+        harness). EventOFPPortStatus below catches the faster local case.
+        """
+        link = ev.link
+        src_node = self._node_id_for_dpid(link.src.dpid)
+        dst_node = self._node_id_for_dpid(link.dst.dpid)
+        if src_node is None or dst_node is None:
+            return
+        lid = _link_id(src_node, dst_node)
+        self.logger.info("*** LINK LOST (GEANT %s) -- marking down", lid)
+        self.state.set_link_status(lid, is_up=False)
+
+    @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)
+    def _port_status_handler(self, ev):
+        """
+        A switch telling the controller a port went down/up directly -- faster
+        and more reliable than waiting for LLDP to time out. OFPPR_DELETE, or
+        OFPPR_MODIFY with OFPPS_LINK_DOWN set, is a real link-down; the reverse
+        is a link-up. Redundant with the LLDP handlers by design: whichever
+        arrives first records the transition, the second is a no-op
+        (set_link_status skips a same-status report).
+        """
+        msg = ev.msg
+        ofproto = msg.datapath.ofproto
+        dpid = msg.datapath.id
+        port_no = msg.desc.port_no
+        neighbor_dpid = self.port_to_neighbor_dpid.get((dpid, port_no))
+        src_node = self._node_id_for_dpid(dpid)
+        dst_node = self._node_id_for_dpid(neighbor_dpid) if neighbor_dpid is not None else None
+        if src_node is None or dst_node is None:
+            return  # host-facing or not-yet-discovered port
+        lid = _link_id(src_node, dst_node)
+
+        if msg.reason == ofproto.OFPPR_DELETE:
+            is_up = False
+        elif msg.reason == ofproto.OFPPR_ADD:
+            is_up = True
+        else:  # OFPPR_MODIFY -- read the link-down bit
+            is_up = not bool(msg.desc.state & ofproto.OFPPS_LINK_DOWN)
+        self.logger.info("*** PORT STATUS %s port=%s (GEANT %s) -> %s",
+                         dpid, port_no, lid, "up" if is_up else "down")
+        self.state.set_link_status(lid, is_up=is_up)
 
     def _poll_loop(self):
         while True:
@@ -213,10 +278,17 @@ class StabilityAwareTE(app_manager.RyuApp):
             link = _link_id(src_node, dst_node)
             utilization = self.collector.calculate_utilization(port_entry)
             loss = self.collector.calculate_loss_rate(port_entry)
+            # Carry the link's *known* status (set by the port-status / LLDP
+            # handlers), not a hard-coded "up" -- otherwise a stray stats reply
+            # for a link those handlers just marked down would register a
+            # spurious "up" flap through update_link_statistics' own
+            # transition check.
+            known_status = self.state.link_monitor.get_link_status(link)
             self.state.update_link_statistics(LinkStatistics(
                 timestamp=now, link_id=link, utilization=utilization,
                 rx_mbps=port_entry.rx_mbps, tx_mbps=port_entry.tx_mbps,
-                status="up", packet_loss=loss,
+                status=known_status if known_status is not None else "up",
+                packet_loss=loss,
             ))
             self.logger.info(
                 "*** REAL LINK STATS %s: u=%.4f loss=%.5f rx=%.3fMbps tx=%.3fMbps",
@@ -268,11 +340,17 @@ class StabilityAwareTE(app_manager.RyuApp):
 
     def _decision_loop(self):
         hub.sleep(10)  # let switch registration + LLDP discovery settle before the first decision
-        now_s = 0.0
         while True:
+            # Wall-clock, so the driver's timing gates (hold-down, recovery
+            # window, churn/jitter/flap decay) and the async link-event
+            # handlers -- which call set_link_status() on wall-clock time --
+            # all evaluate against one consistent clock. A synthetic counter
+            # here would decay the flap penalty against a different clock than
+            # the transitions were recorded on (the exact hazard the offline
+            # simulation_common.set_link_condition had to be fixed for).
+            now_s = time.time()
             for src, dst, threshold_override in MONITORED_PAIRS:
                 self._evaluate_pair(src, dst, now_s, threshold_override)
-            now_s += DECISION_INTERVAL_S
             hub.sleep(DECISION_INTERVAL_S)
 
     def _host_ip(self, node_id: str) -> str:

@@ -155,10 +155,11 @@ def test_resilience_avoid_threshold_routes_around_a_flapping_link(tmp_path):
     """
     End-to-end demonstration through the real DecisionEngine/PathCost/GraphBuilder
     path (not just GraphBuilder directly, see tests/graph_builder.py's unit tests):
-    a link that's flapped enough times to saturate its resilience score gets
-    structurally excluded from find_best_path()'s candidates once
-    resilience_avoid_threshold is enabled, with no other condition (cost, status)
-    changed -- disabled (the default), the same flapping link is still selected.
+    a link that's flapped enough times to saturate its resilience score is
+    routed around by find_best_path() once resilience_avoid_threshold is
+    enabled (the link is priced high, not removed), with no other condition
+    (cost, status) changed -- explicitly disabled, the same flapping link is
+    still selected.
     """
     engine, state, src, dst, current_path, _candidate_path = _make_engine(tmp_path)
     hotspot_link = link_id(current_path[0], current_path[1])
@@ -172,12 +173,46 @@ def test_resilience_avoid_threshold_routes_around_a_flapping_link(tmp_path):
     for i, is_up in enumerate([False, True, False, True]):
         state.set_link_status(hotspot_link, is_up=is_up, now=now + i)
 
-    # Disabled (default): the flapping link is still the cheapest, still selected.
+    # Explicitly disabled: the flapping link is still the cheapest, still selected.
+    engine.path_cost.graph_builder.resilience_avoid_threshold = None
     assert engine.path_cost.find_best_path(src, dst, now=now + 10) == current_path
 
-    # Enabled: the same flapping link is now structurally excluded.
+    # Enabled: the same flapping link is now avoided (priced past any alternative)
+    # -- but only after the score has stayed high for persist_seconds. The gate
+    # is evaluated once per graph build, so drive a few builds across time.
     engine.path_cost.graph_builder.resilience_avoid_threshold = 0.7
-    path_with_avoidance = engine.path_cost.find_best_path(src, dst, now=now + 10)
-    if path_with_avoidance is None:
+    engine.path_cost.graph_builder.resilience_persist_seconds = 4.0
+    engine.path_cost.graph_builder.resilience_avoid_threshold = 0.7  # rebuild gate w/ persist
+    assert engine.path_cost.find_best_path(src, dst, now=now + 10) == current_path  # not yet
+    for t in (12, 14, 16):
+        path_with_avoidance = engine.path_cost.find_best_path(src, dst, now=now + t)
+    assert path_with_avoidance is not None  # never black-holed -- priced, not removed
+    if link_id(path_with_avoidance[0], path_with_avoidance[1]) == hotspot_link:
         pytest.skip("no alternate path exists around this pair's hotspot link in the real GEANT topology")
     assert link_id(path_with_avoidance[0], path_with_avoidance[1]) != hotspot_link
+
+
+def test_evaluate_resilience_avoidance_moves_flow_off_a_gated_link(tmp_path):
+    """The live-deployment trigger: a link on the current path develops a
+    resilience anomaly while staying up and uncongested. An ordinary reroute
+    never sees it; evaluate_resilience_avoidance moves the flow off."""
+    engine, state, src, dst, current_path, _c = _make_engine(tmp_path)
+    on_path_link = link_id(current_path[0], current_path[1])
+    now = 1000.0
+
+    # Sustained loss residual far above prediction on an on-path link, uncongested.
+    for i in range(12):
+        state.record_loss_residual(on_path_link, 0.0 if i < 6 else 0.12, now=now)
+    assert state.get_resilience_score(on_path_link, now=now) >= 0.57
+
+    # nothing gated yet on the builder side -> no-op
+    engine.path_cost.graph_builder.build_weighted_graph(now=now)  # ticks the gate
+    action = engine.evaluate_resilience_avoidance(src, dst, current_path, now=now)
+    if action is None:
+        pytest.skip("this pair's first hop has no resilience-safe alternative in GEANT")
+    assert on_path_link not in {
+        link_id(u, v) for u, v in zip(action["new_path"], action["new_path"][1:])
+    }
+    # explicitly disabled -> never acts
+    engine.path_cost.graph_builder.resilience_avoid_threshold = None
+    assert engine.evaluate_resilience_avoidance(src, dst, current_path, now=now) is None

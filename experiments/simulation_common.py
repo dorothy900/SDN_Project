@@ -208,7 +208,13 @@ def set_link_condition(
         now=now,
     )
     if status is not None:
-        state.set_link_status(link_id_str, is_up=(status == "up"))
+        # Forward the synthetic clock: set_link_status feeds LinkFlapTracker's
+        # record_transition, whose exponential decay is meaningless if half the
+        # events land on now_s and the reads land on real wall-clock time (the
+        # same synthetic-clock hazard update_link_statistics' `now` guards
+        # against). Harmless for callers that pass no now -- both default to
+        # time.time().
+        state.set_link_status(link_id_str, is_up=(status == "up"), now=now)
 
 
 def path_metrics(state: NetworkState, path: Optional[Sequence[str]]) -> Dict[str, object]:
@@ -317,6 +323,7 @@ class DynamicDriver:
             self.path,
             timestamp=BASE_TIMESTAMP + timedelta(seconds=now_s),
             topology_changed=topology_changed,
+            now=now_s,
         )
         reroute = event["decision"] == "reroute"
         flow_updates = 0
@@ -453,6 +460,20 @@ class ProposedDriver:
                 self.engine.stability.update_congestion_state(hotspot_link, hotspot_utilization)
                 self.engine.leak_persistence(hotspot_link)
 
+        # Independent of congestion: move off a link the resilience gate has
+        # latched as anomalous even if it isn't the hotspot and nothing failed.
+        # No-op unless resilience_avoidance is enabled and the current path
+        # actually uses a gated link (the gate's own hysteresis / persistence /
+        # give-up already made that call).
+        if not reroute:
+            resilience_action = self.engine.evaluate_resilience_avoidance(
+                self.src, self.dst, self.path, now=now_s,
+            )
+            if resilience_action:
+                self.path = resilience_action["new_path"]
+                flow_updates += len(self.engine.flow_installer.build_flow_rules(self.path))
+                reroute = True
+
         decision_time_ms = (time.perf_counter() - t0) * 1000.0
         return {
             "path": self.path,
@@ -511,12 +532,14 @@ def make_drivers(
     PathCost.compare_paths' asymmetric old/new costing). None (default)
     preserves every existing caller's behavior exactly.
 
-    resilience_avoid_threshold: opt-in structural avoidance of links with a
-    real resilience anomaly (see NetworkState.get_resilience_score) --
-    forwarded to ProposedDriver only, same as offered_load_mbps above.
-    Deliberately not given to dynamic: resilience awareness is a proposed-
-    only stability mechanism, the same way persistence/hysteresis are --
-    dynamic stays the naive, gate-free baseline throughout.
+    resilience_avoid_threshold: override the avoid threshold for links with a
+    real resilience anomaly (see NetworkState.get_resilience_score / ResilienceGate).
+    config/decision.yaml now enables resilience avoidance by default at 0.57,
+    so ProposedDriver already has it on; pass this only to use a different
+    threshold in one experiment. Forwarded to ProposedDriver only -- deliberately
+    not given to dynamic: resilience awareness is a proposed-only stability
+    mechanism, the same way persistence/hysteresis are, and dynamic stays the
+    naive, gate-free baseline throughout.
     """
     initial_path = GraphBuilder(state).get_candidate_paths(src, dst, max_paths=1)
     initial_path = initial_path[0] if initial_path else StaticShortestPath(state.get_active_graph()).compute_path(src, dst)

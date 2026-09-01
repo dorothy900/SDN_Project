@@ -31,6 +31,22 @@ class LossJitterTracker:
     # deviations reads as maximally abnormal; smaller shifts scale linearly toward 0.
     SIGMA_CAP = 3.0
 
+    # get_abnormal_loss_score()'s absolute-level cap. The 3-sigma shift term
+    # above only fires on a *change* in the loss residual -- a link that has
+    # been losing packets far above its utilisation-predicted rate for the
+    # whole window (never had a clean baseline) shows no shift and would score
+    # 0. This term catches that "chronic, stable, bad" case: a loss residual
+    # (measured minus utilisation-predicted loss) sustained at LOSS_LEVEL_CAP
+    # reads as maximally abnormal on its own. 0.05 = 5 percentage points of
+    # loss beyond what load explains: TCP throughput scales as 1/sqrt(loss)
+    # (Mathis et al.) and is already severely degraded by 2-3% loss; transit
+    # SLAs guarantee <0.1%. A link 5pp worse than its load predicts is
+    # unambiguously faulty in any operating regime, so this is a saturation
+    # point, not a hand-tuned trip threshold. (A ROC calibration of this cap,
+    # analogous to resilience_sensitivity.py's search for the flap
+    # avoid_threshold, is noted as follow-up in that module's docstring.)
+    LOSS_LEVEL_CAP = 0.05
+
     def __init__(self, window_seconds: float = 60.0, saturation: float = 0.20, min_samples: int = 3):
         if window_seconds <= 0:
             raise ValueError("window_seconds must be > 0, got %r" % window_seconds)
@@ -76,16 +92,26 @@ class LossJitterTracker:
 
     def get_abnormal_loss_score(self, link_id: str, now: Optional[float] = None) -> float:
         """
-        Normalized [0.0, 1.0] "abnormally high loss" score, via 3-sigma shift detection
-        (see SIGMA_CAP): splits the window into an earlier baseline half and a later
-        recent half, then scores how many baseline standard deviations the recent
-        half's mean has shifted upward -- not a fixed hand-picked threshold, and not
-        the same statistic as get_jitter_score (that's the window's own overall
-        dispersion; this is a *shift* in level between the window's two halves).
-        Floored at 0 (only a shift toward MORE loss than predicted counts). If the
-        baseline half is (near-)perfectly stable (std ~= 0), any real positive shift
-        reads as maximally abnormal rather than dividing by ~0. Returns 0.0 with
-        fewer than 2 samples in either half.
+        Normalized [0.0, 1.0] "abnormally high loss" score: the max of two terms.
+
+        1. A 3-sigma *shift* term (see SIGMA_CAP): splits the window into an
+           earlier baseline half and a later recent half and scores how many
+           baseline standard deviations the recent half's mean has shifted
+           upward. Catches "recently got worse". Floored at 0 (only an upward
+           shift counts). When the baseline has no variability to normalise
+           against (std ~= 0) the z-score is undefined, so it falls back to the
+           fraction of the recent half sitting above the baseline -- a single
+           outlier poll then scores ~1/len(recent), not a full 1.0, while a
+           sustained shift still scores near 1.0 (the single-poll false-positive
+           guard).
+        2. An absolute *level* term (see LOSS_LEVEL_CAP): the recent half's
+           *median* residual as a fraction of LOSS_LEVEL_CAP, capped at 1.0.
+           Catches "chronically, stably bad" -- a link whose loss has been far
+           above its utilisation-predicted rate for the whole window shows no
+           shift but still scores high here. Median, not mean, so a single
+           outlier poll can't drive this term on its own either.
+
+        Returns 0.0 with fewer than 2 samples in either half.
         """
         values = self._fresh_values(link_id, now)
         half = len(values) // 2
@@ -96,13 +122,21 @@ class LossJitterTracker:
         baseline_variance = sum((v - baseline_mean) ** 2 for v in baseline) / (len(baseline) - 1)
         baseline_std = math.sqrt(baseline_variance)
         recent_mean = sum(recent) / len(recent)
+        ordered = sorted(recent)
+        mid = len(ordered) // 2
+        recent_median = ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
+
+        level_score = max(0.0, min(recent_median / self.LOSS_LEVEL_CAP, 1.0))
+
         shift = recent_mean - baseline_mean
         if shift <= 0:
-            return 0.0
-        if baseline_std < 1e-9:
-            return 1.0
-        z = shift / baseline_std
-        return min(z / self.SIGMA_CAP, 1.0)
+            shift_score = 0.0
+        elif baseline_std < 1e-9:
+            shift_score = sum(1 for v in recent if v > baseline_mean + 1e-9) / len(recent)
+        else:
+            shift_score = min((shift / baseline_std) / self.SIGMA_CAP, 1.0)
+
+        return max(shift_score, level_score)
 
     def reset(self) -> None:
         """Clear all tracked history (mainly for test isolation)."""

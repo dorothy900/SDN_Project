@@ -47,20 +47,34 @@ recovery:
   window_seconds: 5
 
 resilience_avoidance:
-  # Structural avoidance for links with a real resilience anomaly (flapping,
-  # sustained abnormal loss, abnormal traffic growth -- see
-  # NetworkState.get_resilience_score). Disabled by default: no existing
-  # scenario's links ever accumulate a nonzero resilience_score, so this
-  # only changes behavior for a caller/scenario that explicitly enables it.
+  # Avoidance for links with a real resilience anomaly -- flapping or
+  # sustained abnormal loss (get_resilience_score = max of those two; traffic
+  # growth was tried and dropped -- a link that is just getting busier is
+  # what alpha*utilisation already prices). Enabled by default (2026-09-01); none
+  # of the four generalization scenarios' links ever accumulate a nonzero
+  # resilience_score, so every one of them produces byte-identical output
+  # enabled vs disabled -- only experiments/resilience_avoidance.py (and a
+  # real deployment) exercises it.
   #
-  # The 3 underlying signals are grounded, not hand-picked: flapping follows
-  # RFC 2439's BGP route flap damping shape (exponential-decay penalty +
-  # suppress/reuse hysteresis, rescaled from BGP's minutes-scale defaults to
-  # this project's seconds-scale stability timers -- see
-  # LinkFlapTracker's docstring); abnormal loss / traffic growth both use
-  # 3-sigma shift detection (Shewhart-control-chart convention, standard in
-  # network anomaly detection -- see LossJitterTracker.get_abnormal_loss_score
-  # and LinkHistory.traffic_growth_score). avoid_threshold itself (how much
+  # Applied as a large *finite additive* cost penalty in GraphBuilder
+  # (RESILIENCE_AVOID_PENALTY), NOT a structural edge removal: an anomalous
+  # link is routed around whenever any alternative exists, but a link with
+  # no alternative still carries traffic rather than black-holing the demand.
+  # The avoid decision is latched through ResilienceGate's suppress/reuse
+  # hysteresis (reuse = 0.375 * avoid_threshold, RFC 2439's own ratio) so a
+  # score hovering near avoid_threshold can't toggle a link in and out of
+  # avoidance on successive rebuilds -- which would re-create the very path
+  # churn this layer exists to remove.
+  #
+  # Both signals are grounded, not hand-picked: flapping follows RFC 2439's
+  # BGP route flap damping shape (exponential-decay penalty + suppress/reuse
+  # hysteresis, rescaled from BGP's minutes-scale defaults to this project's
+  # seconds-scale stability timers -- see LinkFlapTracker's docstring);
+  # abnormal loss is the max of a 3-sigma shift term (Shewhart-control-chart
+  # convention, standard in network anomaly detection) and an absolute-level
+  # term (a loss residual sustained at LOSS_LEVEL_CAP=0.05 = 5pp beyond what
+  # load predicts reads as maximally abnormal -- TCP/SLA grounded; see
+  # LossJitterTracker.get_abnormal_loss_score). avoid_threshold itself (how much
   # of that already-principled [0,1] score counts as "avoid this link") is
   # now also data-driven rather than hand-picked: experiments/resilience_
   # sensitivity.py runs a ROC / Youden's-J search (standard threshold-
@@ -75,8 +89,21 @@ resilience_avoidance:
   # rather than sitting exactly on the boundary. Still synthetic ground
   # truth, not independently validated against real hardware traffic -- see
   # resilience_sensitivity.py's own module docstring for that same caveat.
-  enabled: false
+  enabled: true
   avoid_threshold: 0.57
+  # Extra safeguard: the score must stay above avoid_threshold *continuously*
+  # for this long before the gate latches. Default 0 (latch as soon as the
+  # score crosses) -- the single-poll false-positive case it would guard
+  # against is already handled at the signal level (LossJitterTracker /
+  # LinkHistory fall back to "fraction of the recent half above baseline"
+  # when the baseline has no variance, so one garbage poll scores ~1/N not
+  # 1.0; and a constant congestion_model calibration offset produces no
+  # *shift* at all, so the shift detectors never fire on it). Set to a few
+  # seconds (~= a couple of monitoring polls, topology.yaml
+  # interval_seconds: 2) in environments with known-flaky telemetry, at the
+  # cost of that much added avoidance latency. Release always goes through
+  # the reuse-band hysteresis, never this delay.
+  persist_seconds: 0.0
 
 path_cost_weights:
   alpha: 0.4

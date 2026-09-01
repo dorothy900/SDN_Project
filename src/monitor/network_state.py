@@ -4,9 +4,10 @@ Network State - central network state manager, exposing
 get_network_state() as the shared read interface for routing modules.
 """
 import json
+from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Deque, Dict, Optional, List, Tuple
 
 from .link_monitor import LinkMonitor
 from .topology_state import TopologyState
@@ -25,6 +26,20 @@ class NetworkState:
     Combines topology, link monitoring, and history into a single interface.
     Exports get_network_state() for use by routing and decision modules.
     """
+
+    # Correlated-flap discount: N distinct links all reporting a status
+    # transition inside one monitoring poll is far more likely a controller-
+    # view artefact (the control channel to a switch dropped and came back, so
+    # every one of its links flapped at once; or an LLDP/topology-discovery
+    # sweep glitch) than that many genuinely independent link failures in the
+    # same ~2s. On the GEANT topology (~40 nodes, ~60 edges) 4+ real
+    # simultaneous failures in one poll is not a regime this project targets.
+    # Such transitions still count -- at CORRELATED_FLAP_WEIGHT, not zero -- in
+    # case the burst really is real; LinkFlapTracker's own decay then sorts
+    # out a link that keeps flapping on its own afterwards.
+    CORRELATED_FLAP_WINDOW_S = 2.0
+    CORRELATED_FLAP_MIN_LINKS = 4
+    CORRELATED_FLAP_WEIGHT = 0.25
 
     def __init__(
         self,
@@ -53,6 +68,13 @@ class NetworkState:
         # (monitor layer) shouldn't reach up into the decision layer's
         # state to read it.
         self.jitter_settle_window_seconds = jitter_settle_window_seconds
+
+        # (timestamp, link_id) for every real status transition in the last
+        # CORRELATED_FLAP_WINDOW_S -- feeds the correlated-flap discount.
+        self._recent_transitions: Deque[Tuple[float, str]] = deque()
+        # Links already discounted as part of the current burst (so an earlier
+        # burst member isn't re-discounted every time a later one arrives).
+        self._burst_discounted: set = set()
 
         self.last_update_time: Optional[datetime] = None
 
@@ -107,22 +129,37 @@ class NetworkState:
         return self.loss_jitter.get_abnormal_loss_score(link_id, now=now)
 
     def get_traffic_growth_score(self, link_id: str) -> float:
-        """Normalized [0.0, 1.0] abnormal-traffic-growth score -- see LinkHistory.traffic_growth_score."""
+        """
+        Normalized [0.0, 1.0] abnormal-traffic-growth score -- see
+        LinkHistory.traffic_growth_score. Exposed as a metric but deliberately
+        NOT part of get_resilience_score: a link whose traffic is simply rising
+        is not unreliable, it is busy, and that is exactly what alpha*utilization
+        in the cost formula already prices. Folding it into the resilience gate
+        made the gate fire on any link under increasing load (see
+        experiments/increasing_load_generalization), which is not what an
+        avoidance signal is for.
+        """
         return self.history.get_or_create_history(link_id).traffic_growth_score
 
     def get_resilience_score(self, link_id: str, now: Optional[float] = None) -> float:
         """
-        Normalized [0.0, 1.0] combined resilience/anomaly score: the worst of flapping,
-        sustained abnormal loss, and abnormal traffic growth -- max, not sum, so multiple
-        simultaneous signals don't over-penalize past what any one of them alone already
-        means ("avoid this link"). Independent of the alpha..eta path-cost formula (see
-        GraphBuilder.build_weighted_graph's resilience-avoidance filter) -- this is a
-        structural avoidance signal, not another cost-formula term.
+        Normalized [0.0, 1.0] combined resilience/anomaly score: the worse of two
+        signals a link can carry that its *load* does not explain --
+          - flapping (LinkFlapTracker, RFC 2439 shape), and
+          - abnormal loss (LossJitterTracker: a 3-sigma upward shift OR a
+            chronically high level of the loss residual, i.e. loss well above
+            what utilisation predicts).
+        max, not sum, so two simultaneous signals don't over-penalize past what
+        either alone already means ("avoid this link"). Independent of the
+        alpha..eta path-cost formula: it feeds ResilienceGate (persistence +
+        suppress/reuse hysteresis) and then a large finite penalty in
+        GraphBuilder -- an avoidance signal applied outside the formula, not
+        another weighted term, and not a hard edge removal. Traffic growth is
+        deliberately excluded (see get_traffic_growth_score).
         """
         return max(
             self.get_link_flap_score(link_id, now=now),
             self.get_abnormal_loss_score(link_id, now=now),
-            self.get_traffic_growth_score(link_id),
         )
 
     def update_link_statistics(self, link_stats: LinkStatistics, now: Optional[float] = None) -> None:
@@ -145,6 +182,15 @@ class NetworkState:
                 silently accumulates every sample for the whole run instead
                 of reflecting only the last window_seconds.
         """
+        # A status carried on a stats update is a real up/down transition too,
+        # not only an explicit set_link_status() call -- record it for the flap
+        # tracker before link_monitor absorbs the new status (after which the
+        # old value is gone). Without this, a caller that pushes status changes
+        # through update_link_statistics (set_link_condition in the offline
+        # experiments; a port-state change folded into a stats poll in the live
+        # path) never registers a flap at all.
+        self._record_flap_if_transition(link_stats.link_id, link_stats.status, now=now)
+
         self.link_monitor.update_link_stats(link_stats)
 
         # Add to history
@@ -195,19 +241,52 @@ class NetworkState:
                 wall-clock time.
         """
         status = "up" if is_up else "down"
-        # A real transition, not the link's first-ever status report -- get_link_flap_score
-        # should only count actual flaps, and every link's very first observation would
-        # otherwise register as a spurious "recovery" or "failure" against nothing.
-        previous_status = self.link_monitor.get_link_status(link_id)
-        if previous_status is not None and previous_status != status:
-            self.link_flap.record_transition(link_id, now=now)
-
+        self._record_flap_if_transition(link_id, status, now=now)
         self.link_monitor.set_link_status(link_id, status)
 
         # Also update topology graph if needed
         if "-" in link_id:
             u, v = link_id.split("-", 1)
             self.topology.set_link_status(u, v, is_up)
+
+    def _record_flap_if_transition(self, link_id: str, status: str, now: Optional[float] = None) -> None:
+        """
+        Feed LinkFlapTracker a transition iff `status` actually differs from the
+        link's currently-stored status. Skips the link's very first observation
+        (previous_status is None) -- every link would otherwise register a
+        spurious flap against nothing on startup. Must be called before whatever
+        writes the new status into link_monitor.
+
+        Applies the correlated-flap discount (see the class constants): a
+        transition that lands in a burst of many links transitioning together
+        is recorded at a reduced weight, since that pattern is a controller-view
+        artefact far more often than it is that many real failures.
+        """
+        previous_status = self.link_monitor.get_link_status(link_id)
+        if previous_status is None or previous_status == status:
+            return
+
+        ts = now if now is not None else datetime.now().timestamp()
+        cutoff = ts - self.CORRELATED_FLAP_WINDOW_S
+        while self._recent_transitions and self._recent_transitions[0][0] < cutoff:
+            self._recent_transitions.popleft()
+        self._recent_transitions.append((ts, link_id))
+        distinct_links = {lid for _, lid in self._recent_transitions}
+
+        if len(distinct_links) >= self.CORRELATED_FLAP_MIN_LINKS:
+            weight = self.CORRELATED_FLAP_WEIGHT
+            # The first few members of a burst were recorded at full weight
+            # before it was apparent -- retroactively pull them back down to
+            # the same discount, once, as the burst reveals itself.
+            back_out = self.link_flap.penalty_per_flap * (1.0 - self.CORRELATED_FLAP_WEIGHT)
+            for earlier in distinct_links - self._burst_discounted - {link_id}:
+                self.link_flap.adjust_penalty(earlier, -back_out)
+            self._burst_discounted |= distinct_links
+        else:
+            weight = 1.0
+            self._burst_discounted.clear()
+
+        self.link_flap.record_transition(link_id, now=now, weight=weight)
     
     def get_network_state(self) -> Dict:
         """

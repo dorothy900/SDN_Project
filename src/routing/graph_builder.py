@@ -13,6 +13,7 @@ import networkx as nx
 
 from ..monitor.network_state import NetworkState
 from .congestion_model import predicted_delay_ms, predicted_loss
+from .resilience_gate import ResilienceGate
 
 
 class GraphBuilder:
@@ -25,9 +26,34 @@ class GraphBuilder:
     # keeps that design safe regardless of how any curve is calibrated.
     MIN_EDGE_COST = 0.001
 
+    # Additive cost applied to an edge the resilience gate says to avoid
+    # (flapping or sustained abnormal loss -- see
+    # NetworkState.get_resilience_score), independent of the alpha..eta cost
+    # formula. Large enough to dominate any loop-free alternative's normal
+    # cost (edge weights sit near 1.0 and the topology's diameter is small),
+    # so traffic leaves an anomalous link whenever any alternative exists --
+    # but finite and additive, not a structural edge removal, so a link with
+    # NO alternative still carries traffic rather than black-holing the
+    # demand, and a path crossing several anomalous links is penalised more
+    # than one. None threshold (default) disables the gate entirely: every
+    # existing test/experiment builds a NetworkState whose links never
+    # accumulate a nonzero resilience_score, so this only changes behaviour
+    # for a caller that opts in.
+    RESILIENCE_AVOID_PENALTY = 1000.0
+
+    # Bounded-downside cap on avoidance (see resilience_effective_graph). If the
+    # cheapest anomaly-free route for a demand costs more than this multiple of
+    # its cheapest route overall, the gate "gives up" for that demand and routes
+    # on unpenalised costs -- avoidance is a safety margin, not a licence to
+    # push a flow onto an arbitrarily worse path. 4x comfortably clears a
+    # legitimate one- or two-hop detour around a bad link while stopping a
+    # pathological blow-up.
+    RESILIENCE_MAX_DETOUR_FACTOR = 4.0
+
     def __init__(
         self, network_state: NetworkState, weights: Optional[Dict[str, float]] = None,
         resilience_avoid_threshold: Optional[float] = None,
+        resilience_persist_seconds: float = 0.0,
     ):
         self.network_state = network_state
         self.weights = weights or {
@@ -39,18 +65,35 @@ class GraphBuilder:
             "zeta": 0.05,
             "eta": 0.05,
         }
-        # Structural avoidance for links with a real resilience anomaly (flapping,
-        # sustained abnormal loss, abnormal traffic growth -- see
-        # NetworkState.get_resilience_score), independent of the alpha..eta cost
-        # formula above: an edge whose resilience_score exceeds this is removed from
-        # the graph entirely, the same way NetworkState.get_active_graph() already
-        # removes genuinely down links, rather than merely priced higher. None
-        # (default) disables the filter -- every existing test/experiment builds a
-        # NetworkState whose links never accumulate a nonzero resilience_score, so
-        # this only changes behavior for a caller that opts in.
+        # How long a link's resilience score must stay above avoid_threshold
+        # before the gate latches (see ResilienceGate.persist_seconds). Read
+        # when the gate is (re)built by the threshold setter below.
+        self.resilience_persist_seconds = resilience_persist_seconds
+        self._resilience_avoid_threshold: Optional[float] = None
+        self._resilience_gate: Optional[ResilienceGate] = None
         self.resilience_avoid_threshold = resilience_avoid_threshold
 
-    def build_weighted_graph(self, now: Optional[float] = None) -> nx.Graph:
+    @property
+    def resilience_avoid_threshold(self) -> Optional[float]:
+        return self._resilience_avoid_threshold
+
+    @resilience_avoid_threshold.setter
+    def resilience_avoid_threshold(self, value: Optional[float]) -> None:
+        # Assignable at runtime (simulation_common / tests do this to opt a
+        # single driver in without a custom decision.yaml); rebuild the
+        # stateful gate so its suppress/reuse hysteresis tracks the new
+        # threshold rather than a stale one.
+        value = float(value) if value is not None else None
+        self._resilience_avoid_threshold = value
+        self._resilience_gate = (
+            ResilienceGate(
+                self.network_state, value,
+                persist_seconds=self.resilience_persist_seconds,
+            )
+            if value is not None else None
+        )
+
+    def build_weighted_graph(self, now: Optional[float] = None, apply_resilience: bool = True) -> nx.Graph:
         """
         Build a graph where every edge has a deterministic routing weight.
 
@@ -61,24 +104,70 @@ class GraphBuilder:
         pass the same synthetic clock a caller is driving DecisionEngine with
         (e.g. an offline experiment's now_s) so churn is evaluated against
         that clock instead of silently defaulting to real wall-clock time.
+
+        apply_resilience=False builds the same graph without the resilience
+        gate's penalty (used by resilience_effective_graph to price the
+        no-avoidance baseline for the bounded-downside cap).
         """
         graph = self.network_state.get_active_graph()
 
-        if self.resilience_avoid_threshold is not None:
-            unresilient_edges = [
-                (u, v) for u, v in graph.edges()
-                if self.network_state.get_resilience_score(self._get_link_id(u, v), now=now)
-                >= self.resilience_avoid_threshold
-            ]
-            graph.remove_edges_from(unresilient_edges)
+        avoided: set = set()
+        if apply_resilience and self._resilience_gate is not None:
+            avoided = self._resilience_gate.avoided_links(
+                (self._get_link_id(u, v) for u, v in graph.edges()), now=now
+            )
 
         for u, v in sorted(graph.edges(), key=self._canonical_edge):
             link_id = self._get_link_id(u, v)
             stats = self.network_state.get_link_stats(link_id)
-            graph[u][v]["weight"] = self._calculate_edge_cost(stats, link_id, now=now)
+            cost = self._calculate_edge_cost(stats, link_id, now=now)
+            if link_id in avoided:
+                cost += self.RESILIENCE_AVOID_PENALTY
+            graph[u][v]["weight"] = cost
             graph[u][v]["link_id"] = link_id
+            graph[u][v]["resilience_avoided"] = link_id in avoided
 
         return graph
+
+    def resilience_effective_graph(self, src: str, dst: str, now: Optional[float] = None) -> nx.Graph:
+        """
+        The graph a demand src->dst should actually be routed on: the
+        resilience-penalised graph when avoiding the anomalous links is
+        affordable (cheapest anomaly-free route <= RESILIENCE_MAX_DETOUR_FACTOR
+        x cheapest route overall), otherwise the unpenalised graph -- the gate
+        "gives up" rather than force the flow onto a pathologically worse path,
+        or one that does not exist at all. Falls straight through to
+        build_weighted_graph when the gate is disabled or nothing is avoided.
+        """
+        penalised = self.build_weighted_graph(now=now)
+        if self._resilience_gate is None:
+            return penalised
+        avoided = {
+            self._get_link_id(u, v)
+            for u, v in penalised.edges()
+            if penalised[u][v].get("resilience_avoided")
+        }
+        if not avoided or src not in penalised or dst not in penalised:
+            return penalised
+
+        plain = self.build_weighted_graph(now=now, apply_resilience=False)
+        try:
+            plain_cost = nx.shortest_path_length(plain, src, dst, weight="weight")
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            return penalised
+
+        anomaly_free = plain.copy()
+        anomaly_free.remove_edges_from([
+            (u, v) for u, v in plain.edges() if self._get_link_id(u, v) in avoided
+        ])
+        try:
+            avoid_cost = nx.shortest_path_length(anomaly_free, src, dst, weight="weight")
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            return plain  # no anomaly-free route exists at all -- give up
+
+        if avoid_cost <= self.RESILIENCE_MAX_DETOUR_FACTOR * plain_cost:
+            return penalised
+        return plain  # avoidance possible but too expensive -- give up
 
     def get_candidate_paths(
         self, src: str, dst: str, max_paths: int = 3, now: Optional[float] = None
@@ -90,7 +179,7 @@ class GraphBuilder:
         path order so repeated calls on the same topology always return the same
         candidates.
         """
-        graph = self.build_weighted_graph(now=now)
+        graph = self.resilience_effective_graph(src, dst, now=now)
         if src not in graph or dst not in graph:
             return []
 

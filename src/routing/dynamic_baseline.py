@@ -21,8 +21,8 @@ class DynamicBaseline:
         self.threshold = threshold
         self.events: List[Dict[str, object]] = []
 
-    def compute_path(self, src, dst):
-        graph = self.graph_builder.build_weighted_graph()
+    def compute_path(self, src, dst, now: Optional[float] = None):
+        graph = self.graph_builder.build_weighted_graph(now=now)
         try:
             return nx.shortest_path(graph, src, dst, weight="weight")
         except (nx.NetworkXNoPath, nx.NodeNotFound):
@@ -63,6 +63,7 @@ class DynamicBaseline:
         current_path: Optional[List[str]],
         timestamp: Optional[datetime] = None,
         topology_changed: bool = False,
+        now: Optional[float] = None,
     ) -> Dict[str, object]:
         """
         Evaluate whether the baseline should reroute immediately.
@@ -73,9 +74,15 @@ class DynamicBaseline:
         just observed a link up/down (port-status) event on the topology,
         which a reactive controller would notice immediately without waiting
         on the next utilization poll.
+
+        now: synthetic clock for the graph rebuild -- must match whatever
+        clock the caller drives everything else with. Left unset, the rebuild
+        (and every rolling-window tracker read inside it) defaults to real
+        wall-clock time, which silently evicts every synthetic-timestamp
+        sample from the jitter/churn windows -- see GraphBuilder.build_weighted_graph.
         """
         ts = timestamp or datetime.now()
-        proposed_path = self.compute_path(src, dst)
+        proposed_path = self.compute_path(src, dst, now=now)
         current_utilization = self.get_path_utilization(current_path or [])
         current_viable = self.path_is_viable(current_path or [])
         should_consider_reroute = (

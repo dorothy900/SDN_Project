@@ -84,13 +84,24 @@ def test_abnormal_loss_score_zero_with_fewer_than_two_samples_per_half():
     assert tracker.get_abnormal_loss_score("s1-s2", now=now) == 0.0
 
 
-def test_abnormal_loss_score_zero_with_no_shift():
+def test_abnormal_loss_score_zero_with_no_shift_and_low_level():
     tracker = LossJitterTracker()
     now = 1000.0
-    # Identical pattern repeated in both halves -- baseline and recent means match exactly.
-    for v in [0.05, 0.06, 0.05, 0.06, 0.05, 0.06, 0.05, 0.06]:
+    # Identical pattern in both halves (no shift) AND residuals negligible next
+    # to the absolute LOSS_LEVEL_CAP (0.05) -- neither term should meaningfully fire.
+    for v in [0.0, 0.001, 0.0, 0.001, 0.0, 0.001, 0.0, 0.001]:
         tracker.record_loss_residual("s1-s2", v, now=now)
-    assert tracker.get_abnormal_loss_score("s1-s2", now=now) == pytest.approx(0.0, abs=1e-9)
+    assert tracker.get_abnormal_loss_score("s1-s2", now=now) < 0.02
+
+
+def test_abnormal_loss_score_fires_on_a_chronic_stable_high_residual_with_no_shift():
+    """The absolute-level term: a link losing packets far above its predicted
+    rate for the whole window -- no shift, no clean baseline -- still scores high."""
+    tracker = LossJitterTracker()
+    now = 1000.0
+    for v in [0.06, 0.055, 0.062, 0.058, 0.06, 0.059, 0.061, 0.057]:  # ~6% residual, flat
+        tracker.record_loss_residual("s1-s2", v, now=now)
+    assert tracker.get_abnormal_loss_score("s1-s2", now=now) == 1.0
 
 
 def test_abnormal_loss_score_rises_with_a_real_upward_shift():
@@ -102,10 +113,11 @@ def test_abnormal_loss_score_rises_with_a_real_upward_shift():
 
 
 def test_abnormal_loss_score_ignores_downward_shift():
-    """A link doing *better* than its own baseline isn't abnormal -- floored at 0."""
+    """A link dropping back to a low residual isn't abnormal -- shift term floored
+    at 0, and the now-low recent level keeps the level term at 0 too."""
     tracker = LossJitterTracker()
     now = 1000.0
-    for v in [0.30, 0.30, 0.30, 0.01, 0.01, 0.01]:
+    for v in [0.30, 0.30, 0.30, 0.0, 0.0, 0.0]:
         tracker.record_loss_residual("s1-s2", v, now=now)
     assert tracker.get_abnormal_loss_score("s1-s2", now=now) == 0.0
 
@@ -117,6 +129,26 @@ def test_abnormal_loss_score_maxes_out_for_shift_from_a_perfectly_stable_baselin
     for v in [0.05, 0.05, 0.05, 0.20, 0.20, 0.20]:
         tracker.record_loss_residual("s1-s2", v, now=now)
     assert tracker.get_abnormal_loss_score("s1-s2", now=now) == 1.0
+
+
+def test_abnormal_loss_score_single_outlier_against_clean_baseline_is_not_maximal():
+    """A single garbage poll against a perfectly clean baseline must not, on its
+    own, read as a link degradation -- with no baseline variance the score falls
+    back to the fraction of the recent half that is actually elevated."""
+    tracker = LossJitterTracker()
+    now = 1000.0
+    for v in [0.0, 0.0, 0.0, 0.0, 0.0, 0.6]:  # one outlier in a 3-sample recent half
+        tracker.record_loss_residual("s1-s2", v, now=now)
+    score = tracker.get_abnormal_loss_score("s1-s2", now=now)
+    # shift term: fraction above baseline ~ 1/3; level term: recent *median* is
+    # 0.0 (outlier can't move it) -- so well under a typical avoid_threshold.
+    assert 0.0 < score < 0.5
+
+    # ...but a sustained elevation across the whole recent half still maxes out.
+    tracker2 = LossJitterTracker()
+    for v in [0.0, 0.0, 0.0, 0.0, 0.6, 0.6, 0.6, 0.6]:
+        tracker2.record_loss_residual("s1-s2", v, now=now)
+    assert tracker2.get_abnormal_loss_score("s1-s2", now=now) == 1.0
 
 
 def test_abnormal_loss_score_saturates_at_sigma_cap():

@@ -69,11 +69,30 @@ class LinkFlapTracker:
         self._last_update[link_id] = now
         return penalty
 
-    def record_transition(self, link_id: str, now: Optional[float] = None) -> None:
-        """Record that this link's status just actually changed (up<->down)."""
+    def record_transition(self, link_id: str, now: Optional[float] = None, weight: float = 1.0) -> None:
+        """
+        Record that this link's status just actually changed (up<->down).
+
+        weight scales this one transition's penalty contribution (default 1.0 =
+        a full flap). A caller that has reason to distrust the transition report
+        -- e.g. NetworkState discounting a burst of simultaneous transitions
+        across many links as a controller-view artefact rather than that many
+        real link failures -- passes weight < 1.0.
+        """
+        if weight < 0.0:
+            raise ValueError("weight must be >= 0, got %r" % weight)
         ts = now if now is not None else time.time()
-        penalty = self._decay(link_id, ts) + self.penalty_per_flap
+        penalty = self._decay(link_id, ts) + self.penalty_per_flap * weight
         self._penalty[link_id] = penalty
+
+    def adjust_penalty(self, link_id: str, delta: float) -> None:
+        """
+        Add `delta` (typically negative) to a link's current accumulated penalty,
+        floored at 0. Lets a caller retroactively re-weight a transition it has
+        since decided to distrust -- e.g. NetworkState discounting the earlier
+        members of a correlated-flap burst once the burst becomes apparent.
+        """
+        self._penalty[link_id] = max(0.0, self._penalty.get(link_id, 0.0) + delta)
 
     def get_flap_score(self, link_id: str, now: Optional[float] = None) -> float:
         """

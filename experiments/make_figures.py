@@ -351,6 +351,131 @@ def make_weight_search_figure(plt) -> None:
     print("Wrote", out)
 
 
+def make_resilience_avoidance_figure(plt) -> None:
+    """
+    The real-scenario evidence for the resilience-avoidance layer (every other
+    resilience artefact is synthetic ground truth only). A link on the flow's
+    cost-optimal path loses packets far above its utilisation-predicted rate
+    while staying up and uncongested. static / dynamic / proposed_noresil all
+    ride it the whole episode -- an ordinary threshold reroute never sees a
+    lossy-but-uncongested link, and a reactive baseline can't either. proposed
+    (resilience ON, config default) detects it via LossJitterTracker and moves
+    the flow off with DecisionEngine.evaluate_resilience_avoidance. Two rows,
+    one per loss-signal path, from experiments/resilience_avoidance.py:
+      abnormal_loss - clean baseline then a sustained loss shift (3-sigma term).
+      chronic_loss  - the same loss from sample 1, no shift (absolute-level term).
+    """
+    all_rows = [r for r in _load_csv(Path("results/resilience_avoidance/summary.csv"))
+                if int(r["scored_seeds"]) > 0]
+    labels = {"proposed_noresil": "static / dynamic /\nproposed (resil. OFF)",
+              "proposed": "proposed\n(resil. ON)"}
+    colors = {"proposed_noresil": "#c98a2b", "proposed": COLOR["proposed"]}
+    algos = ("proposed_noresil", "proposed")
+
+    fig, axes = plt.subplots(2, 2, figsize=(11, 9))
+    fig.suptitle(
+        "resilience_avoidance: a lossy-but-uncongested link on the flow's path,\n"
+        "23/23 real GEANT pairs x 5 seeds -- proposed (resilience ON) vs the same stack OFF",
+        fontsize=12,
+    )
+
+    for row, scenario in enumerate(("abnormal_loss", "chronic_loss")):
+        rows = [r for r in all_rows if r["scenario"] == scenario]
+        _mean = lambda col: st.mean([float(r[col]) for r in rows])
+        _pstd = lambda col: st.pstdev([float(r[col]) for r in rows])
+
+        ax = axes[row][0]
+        means = [100 * _mean(f"{a}_loss_rate") for a in algos]
+        stds = [100 * _pstd(f"{a}_loss_rate") for a in algos]
+        bars = ax.bar(range(len(algos)), means, 0.55, yerr=stds, capsize=4,
+                      color=[colors[a] for a in algos], alpha=0.9)
+        ax.bar_label(bars, fmt="%.2f", padding=6)
+        ax.set_xticks(range(len(algos)))
+        ax.set_xticklabels([labels[a] for a in algos], fontsize=9)
+        ax.set_ylabel("mean flow packet loss\nover the episode (%)")
+        ax.set_title("%s -- loss the flow eats" % scenario)
+
+        ax = axes[row][1]
+        means = [_mean(f"{a}_delay_ms") for a in algos]
+        stds = [_pstd(f"{a}_delay_ms") for a in algos]
+        bars = ax.bar(range(len(algos)), means, 0.55, yerr=stds, capsize=4,
+                      color=[colors[a] for a in algos], alpha=0.9)
+        ax.bar_label(bars, fmt="%.0f", padding=6)
+        ax.set_xticks(range(len(algos)))
+        ax.set_xticklabels([labels[a] for a in algos], fontsize=9)
+        ax.set_ylabel("mean flow delay\nover the episode (ms)")
+        exposure = _mean("proposed_on_anomaly_link_samples")
+        ax.set_title("%s -- delay\n(proposed on the bad link only %.0f of 21 samples)"
+                     % (scenario, exposure))
+
+    fig.tight_layout(rect=(0, 0, 1, 0.9))
+    out = OUTPUT_DIR / "resilience_avoidance.png"
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print("Wrote", out)
+
+
+def make_resilience_figure(plt) -> None:
+    """
+    2-panel resilience-avoidance threshold-selection figure, sourced from
+    experiments/resilience_sensitivity.py's ROC / Youden's-J search (300
+    randomized instances/class per half_life: positive = "genuinely
+    flapping", negative = "one legitimate transition", scored by
+    LinkFlapTracker.get_flap_score()).
+    """
+    roc_rows = _load_csv(Path("results/resilience_sensitivity/roc.csv"))
+    half_lives = sorted({float(r["half_life_seconds"]) for r in roc_rows})
+    hl_colors = {5.0: "#94a3ab", 10.0: "#eda100", 20.0: "#2a78d6", 40.0: "#1baf7a", 60.0: "#8858c8"}
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5.2))
+    fig.suptitle(
+        "resilience_sensitivity: ROC / Youden's-J search for avoid_threshold\n"
+        "(300 randomized instances/class per half_life)",
+        fontsize=13,
+    )
+
+    ax = axes[0]
+    ax.plot([0, 1], [0, 1], linestyle="--", color="#b0b6bf", linewidth=1, label="chance")
+    for hl in half_lives:
+        hl_rows = sorted((r for r in roc_rows if float(r["half_life_seconds"]) == hl),
+                          key=lambda r: float(r["threshold"]))
+        fpr = [float(r["fpr"]) for r in hl_rows]
+        tpr = [float(r["tpr"]) for r in hl_rows]
+        label = f"half_life={hl:.0f}s" + ("  (config default)" if hl == 20.0 else "")
+        ax.plot(fpr, tpr, color=hl_colors.get(hl, "#333333"), linewidth=1.8, label=label)
+    ax.set_xlabel("FPR  (false positives on 'one legitimate transition')")
+    ax.set_ylabel("TPR  (true positives on 'genuinely flapping')")
+    ax.set_title("(a) ROC curves per half_life")
+    ax.legend(fontsize=8, loc="lower right")
+    ax.set_xlim(-0.02, 1.02)
+    ax.set_ylim(-0.02, 1.02)
+
+    ax = axes[1]
+    hl20 = sorted((r for r in roc_rows if float(r["half_life_seconds"]) == 20.0),
+                  key=lambda r: float(r["threshold"]))
+    thresholds = [float(r["threshold"]) for r in hl20]
+    j_values = [float(r["youden_j"]) for r in hl20]
+    ax.plot(thresholds, j_values, color="#2a78d6", linewidth=1.8)
+    plateau = [t for t, j in zip(thresholds, j_values) if j >= 0.999]
+    if plateau:
+        ax.axvspan(plateau[0], plateau[-1], color="#2a78d6", alpha=0.12,
+                   label=f"J=1.0 plateau [{plateau[0]:.2f}, {plateau[-1]:.2f}]")
+    ax.axvline(0.57, color="#e34948", linestyle="--", linewidth=1.4, label="config avoid_threshold = 0.57")
+    ax.axvline(0.70, color="#94a3ab", linestyle=":", linewidth=1.2, label="previous hand-picked default = 0.70")
+    ax.set_xlabel("avoid_threshold")
+    ax.set_ylabel("Youden's J = TPR - FPR")
+    ax.set_title("(b) half_life=20s (config default): J vs threshold")
+    ax.legend(fontsize=8, loc="lower left")
+    ax.set_xlim(-0.02, 1.02)
+    ax.set_ylim(-0.05, 1.08)
+
+    fig.tight_layout(rect=(0, 0, 1, 0.88))
+    out = OUTPUT_DIR / "resilience_sensitivity.png"
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print("Wrote", out)
+
+
 def make_vif_figure(plt) -> None:
     fig, ax = plt.subplots(figsize=(8, 4.2))
     labels = ["utilization", "delay_residual", "loss_residual", "churn_score"]
@@ -416,6 +541,8 @@ def main() -> None:
     make_increasing_load_figure(plt)
     make_stale_stats_figure(plt)
     make_priority_policy_figure(plt)
+    make_resilience_figure(plt)
+    make_resilience_avoidance_figure(plt)
     make_vif_figure(plt)
     make_offered_load_figure(plt)
 

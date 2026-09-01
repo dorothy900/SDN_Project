@@ -92,10 +92,14 @@ class LinkHistory:
         standard deviations the recent half's mean has shifted upward (see SIGMA_CAP) --
         not a fixed relative-growth ratio, and scale-free by construction (the shift is
         measured in units of the link's own baseline variability, not a hand-picked Mbps or
-        percentage cutoff). Floored at 0 (only growth counts, not decline). If the baseline
-        half is (near-)perfectly flat (std ~= 0), any real positive shift reads as maximally
-        abnormal rather than dividing by ~0. Returns 0.0 with fewer than 2 samples in
-        either half.
+        percentage cutoff). Floored at 0 (only growth counts, not decline). Returns
+        0.0 with fewer than 2 samples in either half.
+
+        When the baseline half is perfectly flat (std ~= 0) the z-score is
+        undefined, so the score falls back to the fraction of the recent half that
+        sits above the baseline -- a single spike poll scores ~1/len(recent), a
+        sustained ramp still scores near 1.0. Same single-poll false-positive guard
+        as LossJitterTracker.get_abnormal_loss_score.
         """
         window = list(self.tx_mbps_window)
         half = len(window) // 2
@@ -110,7 +114,8 @@ class LinkHistory:
         if shift <= 0:
             return 0.0
         if baseline_std < 1e-9:
-            return 1.0
+            above = sum(1 for v in recent if v > baseline_mean + 1e-9)
+            return above / len(recent)
         z = shift / baseline_std
         return min(z / self.SIGMA_CAP, 1.0)
 

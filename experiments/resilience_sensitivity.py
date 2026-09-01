@@ -24,6 +24,15 @@ picking a trip point (e.g. IEEE 9531440's m-sample-delay-timer approach) --
 still synthetic ground truth, same caveat as above, but now a data-driven
 threshold instead of a single validated operating point.
 
+Scope: this module only calibrates the *flap* signal (LinkFlapTracker). The
+loss signal's two knobs -- LossJitterTracker.SIGMA_CAP (shift term) and
+LOSS_LEVEL_CAP (absolute-level term, added for the "chronic, stable, no
+shift" case) -- are currently set from statistical-process-control / SLA
+convention (see their docstrings), not from an ROC search here. Extending
+this search to those, with a "genuine sustained degradation" positive class
+and an "honest congestion + baseline noise" negative class, is a documented
+follow-up.
+
 Run as: python3 -m experiments.resilience_sensitivity
 """
 from __future__ import annotations
