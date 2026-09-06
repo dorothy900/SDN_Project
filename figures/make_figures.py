@@ -5,7 +5,7 @@ Make Figures - render publication-style, multi-panel matplotlib figures
 offered-load bar charts) for the generalized scenario results and the
 formula-validation statistics, straight from the CSVs already in results/.
 
-Run as: python3 -m experiments.make_figures
+Run as: python3 -m figures.make_figures
 Writes PNGs to results/figures/.
 """
 from __future__ import annotations
@@ -477,6 +477,16 @@ def make_resilience_figure(plt) -> None:
 
 
 def make_vif_figure(plt) -> None:
+    # NOTE: these four VIFs are the *scoped* recompute over the residual-priced
+    # variables (delay_residual / loss_residual, not raw delay_ms / loss --
+    # those are collinear with utilisation by construction, VIF > 600, see
+    # results/joint_independence_matrix/joint_report.md). The scoped recompute
+    # was done ad-hoc during the independence workstream and is not reproduced
+    # by any committed script; the numbers here are transcribed from
+    # compliance_check.md's VIF section (also in methodology_narrative_outline.md
+    # Part 1). To make it reproducible, add a script that reads
+    # results/joint_independence_matrix/joint_samples.csv and runs VIF over
+    # [utilization, delay_residual, loss_residual, churn_score].
     fig, ax = plt.subplots(figsize=(8, 4.2))
     labels = ["utilization", "delay_residual", "loss_residual", "churn_score"]
     values = [2.055, 2.293, 2.836, 1.020]
@@ -498,18 +508,46 @@ def make_vif_figure(plt) -> None:
     print("Wrote", out)
 
 
+def _offered_load_flip_counts() -> List[tuple]:
+    """
+    (pair_label, flip_count) from the real per-pair reports the mininet
+    offered-load check wrote. A 'flip' is a background rate where the
+    offered-load correction changed the accept/reject decision
+    (without_accepted != with_accepted in that pair's markdown table).
+    """
+    base = Path("results/mininet_offered_load_recovery_check")
+    out = []
+    for d in sorted(base.glob("*_*")):
+        if not d.is_dir():
+            continue
+        src, dst = d.name.split("_", 1)
+        text = (d / "report.md").read_text() if (d / "report.md").exists() else ""
+        flips = 0
+        for line in text.splitlines():
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) >= 4 and cells[2] in ("True", "False") and cells[3] in ("True", "False"):
+                flips += cells[2] != cells[3]
+        out.append(("%s->%s" % (src, dst), flips))
+    return out
+
+
 def make_offered_load_figure(plt) -> None:
+    counts = _offered_load_flip_counts()
+    if not counts:
+        return
+    pairs = [p + ("\n(PRIMARY_PAIR)" if p == "2->7" else "") for p, _ in counts]
+    flips = [f for _, f in counts]
+    n_rates = 5
     fig, ax = plt.subplots(figsize=(9, 4.6))
-    pairs = ["2->7\n(PRIMARY_PAIR)", "12->25", "0->12", "3->36", "16->23"]
-    flips = [4, 0, 0, 5, 0]
     colors = ["#1baf7a" if f > 0 else "#94a3ab" for f in flips]
     bars = ax.bar(pairs, flips, color=colors, alpha=0.85)
-    ax.bar_label(bars, labels=[f"{f}/5 rates flip" for f in flips])
-    ax.set_ylim(0, 6)
-    ax.set_ylabel("rates (of 5 tested) where the\ncorrection changes the decision")
+    ax.bar_label(bars, labels=[f"{f}/{n_rates} rates flip" for f in flips])
+    ax.set_ylim(0, n_rates + 1)
+    ax.set_ylabel("background rates (of %d tested) where the\ncorrection changes the decision" % n_rates)
     ax.set_title(
-        "Real-hardware offered-load recovery check, 5 node pairs\n"
-        "PRIMARY_PAIR's original single-rate check (24 Mbps) had found no boundary at all",
+        "Real-hardware offered-load recovery check, %d node pairs\n"
+        "PRIMARY_PAIR's original single-rate check (24 Mbps) had found no boundary at all"
+        % len(pairs),
         fontsize=11.5,
     )
     fig.tight_layout(rect=(0.03, 0, 1, 1))
