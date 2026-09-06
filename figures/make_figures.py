@@ -361,7 +361,7 @@ def make_resilience_avoidance_figure(plt) -> None:
     lossy-but-uncongested link, and a reactive baseline can't either. proposed
     (resilience ON, config default) detects it via LossJitterTracker and moves
     the flow off with DecisionEngine.evaluate_resilience_avoidance. Two rows,
-    one per loss-signal path, from experiments/resilience_avoidance.py:
+    one per loss-signal path, from experiments/resilience/resilience_avoidance.py:
       abnormal_loss - clean baseline then a sustained loss shift (3-sigma term).
       chronic_loss  - the same loss from sample 1, no shift (absolute-level term).
     """
@@ -418,7 +418,7 @@ def make_resilience_avoidance_figure(plt) -> None:
 def make_resilience_figure(plt) -> None:
     """
     2-panel resilience-avoidance threshold-selection figure, sourced from
-    experiments/resilience_sensitivity.py's ROC / Youden's-J search (300
+    experiments/resilience/resilience_sensitivity.py's ROC / Youden's-J search (300
     randomized instances/class per half_life: positive = "genuinely
     flapping", negative = "one legitimate transition", scored by
     LinkFlapTracker.get_flap_score()).

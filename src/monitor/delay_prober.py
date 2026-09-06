@@ -9,7 +9,7 @@ real packet, time how long the round trip takes. This module is the pure,
 Mininet-independent half of that (parsing `ping`'s own output) so it can be
 unit-tested without a live network; the orchestration half (installing
 rules so a ping crosses exactly one link, actually running it) lives in
-scripts/mininet_delay_measurement.py, which needs the real Mininet API.
+scripts/mininet/delay_measurement.py, which needs the real Mininet API.
 """
 from __future__ import annotations
 

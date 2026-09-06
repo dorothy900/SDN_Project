@@ -18,11 +18,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from evaluation.calculate_metrics import MetricsCalculator
 from evaluation.parse_results import ResultParser
-from experiments.congestion import CongestionScenario
-from experiments.failure_recovery import FailureRecoveryScenario
-from experiments.increasing_load import IncreasingLoadScenario
-from experiments.priority_policy import PriorityPolicyScenario
-from experiments.stale_stats import StaleStatsScenario
+from experiments.scenarios.congestion import CongestionScenario
+from experiments.scenarios.failure_recovery import FailureRecoveryScenario
+from experiments.scenarios.increasing_load import IncreasingLoadScenario
+from experiments.scenarios.priority_policy import PriorityPolicyScenario
+from experiments.scenarios.stale_stats import StaleStatsScenario
 from experiments.traffic_generator import TrafficGenerator
 
 

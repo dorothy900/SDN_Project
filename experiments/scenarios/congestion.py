@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""
+Scenario 2 - Local Link Congestion: Temporary vs Persistent (Experiment B).
+
+Runs two independent phases against fresh driver state each time: a short
+spike and a sustained overload on the same hotspot link. The monitored flow
+(flow-video-1, service_type="Video") is config/policies.yaml's high-priority,
+reroute_immediate class, so proposed skips its own persistence gate for it
+and reacts to the short spike exactly like dynamic does -- persistence's
+noise-rejection value doesn't show up on this specific flow by design; it
+would on a non-priority one (Web/File Transfer), which this scenario doesn't
+separately track.
+"""
+
+from __future__ import annotations
+
+import csv
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence
+
+from experiments.simulation_common import (
+    PRIMARY_PAIR,
+    SAMPLE_INTERVAL_S,
+    build_network_state,
+    compute_flow_metrics,
+    link_id,
+    make_drivers,
+    set_link_condition,
+)
+from experiments.traffic_generator import FlowDefinition
+
+BASELINE_UTILIZATION = 0.35
+SPIKE_UTILIZATION = 0.88
+PERSISTENCE_REQUIRED_SAMPLES = 3
+
+
+class CongestionScenario:
+    """Simulate a transient spike then a persistent overload on one hotspot link."""
+
+    def __init__(self, output_dir: Optional[Path] = None):
+        self.output_dir = output_dir or Path("results/pilot/scenario1-2")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def run(
+        self,
+        flows: Sequence[FlowDefinition],
+        run_index: int = 1,
+        algorithms: Sequence[str] = ("static", "dynamic", "proposed"),
+    ) -> Path:
+        rows: List[Dict[str, object]] = []
+        sample_offset = 0
+        sample_offset = self._run_phase(
+            rows=rows,
+            phase="temporary",
+            congestion_samples={4, 5},
+            total_samples=8,
+            flows=flows,
+            run_index=run_index,
+            algorithms=algorithms,
+            sample_offset=sample_offset,
+            seed=run_index * 10,
+        )
+        self._run_phase(
+            rows=rows,
+            phase="sustained",
+            congestion_samples={4, 5, 6, 7, 8, 9},
+            total_samples=12,
+            flows=flows,
+            run_index=run_index,
+            algorithms=algorithms,
+            sample_offset=sample_offset,
+            seed=run_index * 10 + 1,
+        )
+
+        output_path = self.output_dir / ("congestion_run_%d.csv" % run_index)
+        with output_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+        return output_path
+
+    def _run_phase(
+        self,
+        rows: List[Dict[str, object]],
+        phase: str,
+        congestion_samples: set,
+        total_samples: int,
+        flows: Sequence[FlowDefinition],
+        run_index: int,
+        algorithms: Sequence[str],
+        sample_offset: int,
+        seed: int,
+    ) -> int:
+        state = build_network_state(self.output_dir, seed=seed)
+        src, dst = PRIMARY_PAIR
+        # flow-video-1 is the real flow mapped onto PRIMARY_PAIR (see
+        # increasing_load.py's comment); looked up before make_drivers() so
+        # its service_type ("Video", high-priority + reroute_immediate in
+        # config/policies.yaml) can be passed straight into the proposed
+        # driver, so this project's single most-used monitored flow gets
+        # the same reroute_immediate benefit here that
+        # priority_policy.py's own evaluate_service_congestion path gives it.
+        primary_flow = next((f for f in flows if f.flow_id == "flow-video-1"), None)
+        drivers = make_drivers(
+            state, src, dst, threshold=0.7, persistence_required_samples=PERSISTENCE_REQUIRED_SAMPLES,
+            service_type=primary_flow.service_type if primary_flow else None,
+        )
+        hotspot_link = link_id(drivers["static"].path[0], drivers["static"].path[1])
+        # Deliberately NOT setting drivers["proposed"].offered_load_mbps
+        # here: the offered-load self-influence correction was found to
+        # block a real, verified switchback/reroute improvement whenever a
+        # candidate shares no edges with current_path (PRIMARY_PAIR) -- a
+        # real 0.46% improvement ballooned into a rejection. Ablation-
+        # tested across all 4 objectively-selected pairs, both sustained
+        # and chronic-intermittent congestion: disabling it closes
+        # PRIMARY_PAIR's gap to `dynamic` completely with no regression in
+        # the other 3 pairs. The underlying mechanism (PathCost.
+        # calculate_path_cost's offered_load_mbps parameter) is left in
+        # place, still tested in tests/path_cost.py -- it demonstrates a
+        # real, still-open theoretical risk (a candidate that looks
+        # acceptable until its own future load is priced in) this
+        # project's 4 tested pairs didn't happen to hit.
+
+        for sample in range(1, total_samples + 1):
+            now_s = sample * SAMPLE_INTERVAL_S
+            utilization = SPIKE_UTILIZATION if sample in congestion_samples else BASELINE_UTILIZATION
+            set_link_condition(state, hotspot_link, utilization=utilization, now=now_s)
+
+            for algorithm in algorithms:
+                driver = drivers[algorithm]
+                result = driver.step(now_s=now_s, hotspot_link=hotspot_link, hotspot_utilization=utilization)
+
+                for flow in flows:
+                    load = utilization + 0.05 if flow.service_type == "File Transfer" else utilization
+                    metrics = compute_flow_metrics(state, result["path"], flow.offered_load_mbps * min(load, 1.0))
+                    rows.append(
+                        {
+                            "scenario": "local_congestion",
+                            "phase": phase,
+                            "run": run_index,
+                            "sample": sample_offset + sample,
+                            "algorithm": algorithm,
+                            "flow_id": flow.flow_id,
+                            "service_type": flow.service_type,
+                            "offered_load_mbps": round(flow.offered_load_mbps * min(load, 1.0), 6),
+                            "delay_ms": metrics["delay_ms"],
+                            "throughput_mbps": metrics["throughput_mbps"],
+                            "packet_loss": metrics["packet_loss"],
+                            "reroute": result["reroute"],
+                            "flow_updates": result["flow_updates"],
+                            "decision_time_ms": result["decision_time_ms"],
+                            "measurement_stale": False,
+                            "failure_active": False,
+                        }
+                    )
+
+        return sample_offset + total_samples

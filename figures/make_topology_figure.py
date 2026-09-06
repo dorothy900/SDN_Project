@@ -12,7 +12,7 @@ Also marks two things this project's own experiments found on this real
 topology, not just decoration: the two structural-bridge edges (12-20,
 21-27) that have no genuine alternative route anywhere in the graph for
 their own endpoints (why the real-hardware congestion demo could not use
-either of them -- see scripts/ryu_real_congestion_probe.py's docstring),
+either of them -- see scripts/ryu/ryu_real_congestion_probe.py's docstring),
 and the monitored pair (node 0 <-> node 12) together with the hotspot
 link (0-4) that demo actually used instead.
 

@@ -43,7 +43,7 @@ python3 experiment.py --stage 2
 **Port/link statistics come from OVS directly.**
 `StatisticsCollector.parse_ovs_port_stats()` (`src/monitor/statistics_collector.py`) queries
 `ovs-ofctl dump-ports` directly and feeds rate → utilization → `NetworkState` → path-cost-based
-routing. In the live deployment the RYU app (`scripts/ryu_apps/stability_aware_te.py`) uses the
+routing. In the live deployment the RYU app (`scripts/ryu/stability_aware_te.py`) uses the
 same math on OpenFlow `OFPPortStatsReply` counters. An early OpenDaylight REST path was evaluated
 and dropped.
 
@@ -100,6 +100,9 @@ python3 experiment.py --stage 6 --scenario all_plus_priority --repeat 5
 
 # Parameter sensitivity analysis (why the config/decision.yaml defaults are what they are)
 python3 -m experiments.sensitivity_analysis
+# resilience-layer evidence / ROC calibration
+python3 -m experiments.resilience.resilience_avoidance
+python3 -m experiments.resilience.resilience_sensitivity
 # -> results/pilot/sensitivity/{threshold_persistence_sweep,hold_down_sweep}.csv + sensitivity_report.md
 ```
 
@@ -113,12 +116,16 @@ sdn-dissertation/
  │
  ├── scripts/                       # Deployment & real-network verification
  │   ├── start_topology.sh
- │   ├── ryu_apps/stability_aware_te.py     # the full src/ stack embedded in a RYU controller
- │   ├── mininet_path_verification.py       # real Mininet/OVS rule push, full GeantTopology
- │   ├── mininet_failure_recovery_demo.py   # real link failure -> reroute -> recovery
- │   ├── mininet_abnormal_loss_check.py     # real tc-netem loss + iperf: the resilience loss signal
- │   ├── mininet_link_flap_check.py         # real link flap + iperf: the resilience flap signal
- │   └── mininet_*_check.py                 # cost-formula independence / calibration on real hardware
+ │   ├── ryu/                       # controller-side
+ │   │   ├── stability_aware_te.py          # the full src/ stack embedded in a RYU controller
+ │   │   └── *_probe.py                     # RYU/topology connectivity probes
+ │   └── mininet/                   # real Mininet/OVS checks (run with sudo)
+ │       ├── _common.py                     # shared net build / rule push / iperf helpers
+ │       ├── path_verification.py           # real rule push, full GeantTopology
+ │       ├── failure_recovery_demo.py       # real link failure -> reroute -> recovery
+ │       ├── abnormal_loss_check.py         # real tc-netem loss + iperf: the resilience loss signal
+ │       ├── link_flap_check.py             # real link flap + iperf: the resilience flap signal
+ │       └── *_check.py                     # cost-formula independence / calibration on real hardware
  │
  ├── config/                        # decision.yaml (thresholds, weights, resilience gate),
  │                                  # policies.yaml (traffic classes), topology.yaml
@@ -140,13 +147,15 @@ sdn-dissertation/
  │
  ├── experiments/                   # simulation harness + all offline experiments
  │   ├── simulation_common.py       # shared static / dynamic / proposed driver harness
+ │   ├── traffic_generator.py, sndlib_demand.py                # shared flow / demand model
  │   ├── {topology,network_state,decision_engine}_check.py, baseline_comparison.py, stability.py  # Stages 1-5
  │   ├── pilot_experiments.py       # Stage 6 orchestrator
- │   ├── {increasing_load,congestion,failure_recovery,stale_stats,priority_policy}.py  # Experiments A-E
- │   ├── *_generalization.py        # each scenario re-run over 23 real GEANT pairs x 5 seeds
- │   ├── resilience_avoidance.py, resilience_sensitivity.py   # the resilience layer's evidence + ROC
- │   ├── sensitivity_analysis.py, weight_search_comparison.py, pareto_weight_analysis.py, *_independence*.py
- │   └── traffic_generator.py, sndlib_demand.py
+ │   ├── sensitivity_analysis.py, independence_stats.py        # shared param sweep / stats toolkit
+ │   ├── scenarios/                 # Experiments A-E + generalization / per-seed / per-sample variants
+ │   │   ├── {increasing_load,congestion,failure_recovery,stale_stats,priority_policy}.py
+ │   │   └── *_generalization.py    #   each scenario re-run over 23 real GEANT pairs x 5 seeds
+ │   ├── cost_formula/              # weight_search_comparison, pareto_weight_analysis, *_independence*
+ │   └── resilience/               # resilience_avoidance (evidence), resilience_sensitivity (ROC)
  │
  ├── figures/                       # data-figure generation, run from the repo root:
  │   ├── make_figures.py            #   python3 -m figures.make_figures  -> results/figures/*.png
