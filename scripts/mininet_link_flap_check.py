@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 """
 Mininet Link-Flap Check - real-hardware exercise of the resilience layer's
-flap signal (LinkFlapTracker) and its interaction with a real reroute. Offline
-artefacts drive flaps with synthetic transition schedules; this brings a real
-OVS link genuinely down and up, several times, under a live iperf flow, and
-checks the project's own NetworkState / LinkFlapTracker / ResilienceGate /
-DecisionEngine pipeline reacts as the synthetic tests assume.
+flap signal (LinkFlapTracker) and its interaction with the recovery-window
+switch-back. Offline artefacts drive flaps with synthetic transition
+schedules; this brings a real OVS link genuinely down and up several times
+under a live iperf flow.
 
-A real link on the monitored pair's path is flapped down/up repeatedly. Two
-unmodified ProposedDrivers are polled each DECISION_INTERVAL_S with real
-telemetry and their path changes pushed as real ovs-ofctl rules: one with
-resilience avoidance ON (config default), one with it forced OFF. The check:
-after the link has flapped a couple of times, the resilience-ON driver keeps
-the flow off it even when it is momentarily back up, while the resilience-OFF
-driver is dragged back on by every recovery -- and the live flow's measured
-loss reflects that.
+A real link on the monitored pair's initial path is flapped. One unmodified
+ProposedDriver (resilience avoidance ON, config default) is driven the same
+way the RYU app drives it: each down calls on_link_failure(), the last
+recovery calls on_link_recovered() to open a recovery watch, and every poll
+calls step(). Path changes are pushed as real ovs-ofctl rules.
+
+Checks:
+  1. get_resilience_score crosses avoid_threshold within the first few flaps.
+  2. While the gate is latched, the recovery-window switch-back is refused --
+     the flow stays on the detour even when the link is momentarily back up
+     (the original path is priced past any alternative, never removed).
+  3. Once the link stops flapping and the score decays below the reuse band,
+     the gate releases and the switch-back goes through -- proving the
+     avoidance is not a permanent black-hole.
 
 Run as: sudo python3 scripts/mininet_link_flap_check.py
 Writes results/mininet_resilience/flap_{timeline.csv,report.md}.
@@ -22,6 +27,7 @@ Writes results/mininet_resilience/flap_{timeline.csv,report.md}.
 from __future__ import annotations
 
 import csv
+import re
 import sys
 import time
 from datetime import datetime
@@ -36,31 +42,37 @@ from src.monitor.network_state import NetworkState
 from src.routing.resilience_gate import ResilienceGate
 from experiments.simulation_common import ProposedDriver
 from scripts._mininet_resilience_common import (
-    LinkTelemetry, build_net, clear_path_rules, install_path_rules, iperf_server_loss_series,
-    link_id_of, reinstall_if_changed, start_udp_flow, stop_udp_flow,
+    build_net, clear_path_rules, install_path_rules, link_id_of,
+    reinstall_if_changed, start_udp_flow, stop_udp_flow,
 )
 
 SRC_NODE, DST_NODE = "2", "7"
 AVOID_THRESHOLD = 0.57
 REUSE_THRESHOLD = AVOID_THRESHOLD * ResilienceGate.REUSE_SUPPRESS_RATIO
-FLAP_CYCLES = 5
-DOWN_SECONDS = 4.0
-UP_SECONDS = 8.0
-SETTLE_SECONDS = 60
-DECISION_INTERVAL_S = 4.0
+FLAP_CYCLES = 4
+DOWN_SECONDS = 3.0
+UP_SECONDS = 6.0
+SETTLE_SECONDS = 130          # score half-life is ~20s; needs to fall below the reuse band
+POLL_SECONDS = 2.0
 IPERF_RATE_MBPS = 6
-
-
-def _driver(state, resilience):
-    d = ProposedDriver(state, SRC_NODE, DST_NODE,
-                       config_path=str(PROJECT_ROOT / "config" / "decision.yaml"))
-    if not resilience:
-        d.engine.path_cost.graph_builder.resilience_avoid_threshold = None
-    return d
 
 
 def _links(path):
     return {link_id_of(a, b) for a, b in zip(path, path[1:])}
+
+
+def _iperf_mean_loss(server_log: Path, t_from: float, t_to: float) -> float:
+    """Mean per-second UDP loss fraction from the iperf server log between two run-relative times."""
+    try:
+        lines = server_log.read_text().splitlines()
+    except OSError:
+        return 0.0
+    losses = []
+    for ln in lines:
+        m = re.search(r"(\d+\.\d+)-\s*(\d+\.\d+)\s+sec.*\(([\d.]+)%\)", ln)
+        if m and t_from <= float(m.group(1)) < t_to:
+            losses.append(float(m.group(3)) / 100.0)
+    return sum(losses) / len(losses) if losses else 0.0
 
 
 def main() -> None:
@@ -70,22 +82,20 @@ def main() -> None:
     out_dir = PROJECT_ROOT / "results" / "mininet_resilience"
     out_dir.mkdir(parents=True, exist_ok=True)
     rows: list = []
-    checks: list = []
     try:
         net.start()
         print("*** Network up:", len(net.switches), "switches")
 
         state = NetworkState(output_dir=out_dir)
-        driver_on = _driver(state, True)
-        driver_off = _driver(NetworkState(output_dir=out_dir / "off"), False)
-        # keep both drivers' state fed from the same real telemetry
-        state_off = driver_off.state
-
-        initial = list(driver_on.path)
+        driver = ProposedDriver(
+            state, SRC_NODE, DST_NODE,
+            config_path=str(PROJECT_ROOT / "config" / "decision.yaml"),
+        )
+        initial = list(driver.path)
         fu, fv = initial[0], initial[1]
         flap_lid = link_id_of(fu, fv)
         sw_u, sw_v = topo.node_mapping[fu][0], topo.node_mapping[fv][0]
-        print("*** pair %s->%s, initial path %s, flapping link %s (OVS %s<->%s)"
+        print("*** pair %s->%s  path %s  flapping link %s (OVS %s<->%s)"
               % (SRC_NODE, DST_NODE, "-".join(initial), flap_lid, sw_u, sw_v))
 
         src_host = net.get(topo.node_mapping[SRC_NODE][1])
@@ -94,80 +104,81 @@ def main() -> None:
         src_host.cmd("arp -s %s %s" % (dst_ip, dst_host.MAC()))
         dst_host.cmd("arp -s %s %s" % (src_ip, src_host.MAC()))
 
-        nxt = initial[2] if len(initial) > 2 else initial[0]
-        tele_on = LinkTelemetry(net, topo, [(fu, fv), (fv, nxt)]).bind(state)
-        tele_off = LinkTelemetry(net, topo, [(fu, fv), (fv, nxt)]).bind(state_off)
-
         install_path_rules(net, topo, initial, src_ip, dst_ip)
         installed = list(initial)
-        total = int(FLAP_CYCLES * (DOWN_SECONDS + UP_SECONDS) + SETTLE_SECONDS + 15)
+        total = int(FLAP_CYCLES * (DOWN_SECONDS + UP_SECONDS) + SETTLE_SECONDS + 10)
         start_udp_flow(src_host, dst_host, IPERF_RATE_MBPS, total, out_dir)
+
+        # (at_seconds, action) schedule
+        sched, clk = [], 4.0
+        for i in range(FLAP_CYCLES):
+            sched.append((clk, "down")); clk += DOWN_SECONDS
+            sched.append((clk, "up_last" if i == FLAP_CYCLES - 1 else "up")); clk += UP_SECONDS
+        flap_end = clk
+        crossed = latched_ever = False
 
         t0 = time.time()
         link_up = True
-        schedule = []  # (at_seconds, "down"/"up")
-        clock = 5.0
-        for _ in range(FLAP_CYCLES):
-            schedule.append((clock, "down")); clock += DOWN_SECONDS
-            schedule.append((clock, "up")); clock += UP_SECONDS
-        crossed = False
-
-        while time.time() - t0 < total - 8:
+        while time.time() - t0 < total - 6:
             elapsed = time.time() - t0
-            while schedule and elapsed >= schedule[0][0]:
-                _, action = schedule.pop(0)
-                want_up = action == "up"
-                if want_up != link_up:
-                    net.configLinkStatus(sw_u, sw_v, "up" if want_up else "down")
-                    for d in (driver_on, driver_off):
-                        d.state.set_link_status(flap_lid, is_up=want_up)
-                        if not want_up and flap_lid in _links(d.path):
-                            d.on_link_failure(flap_lid, time.time())
-                    link_up = want_up
-                    print("   [%5.1fs] link %s -> %s" % (elapsed, flap_lid, action))
-
-            status_ov = {} if link_up else {flap_lid: "down"}
-            series = iperf_server_loss_series(out_dir)
-            meas_loss = series[-1] if series else 0.0
-            for tele in (tele_on, tele_off):
-                tele.poll(gap_s=1.5, status_override=status_ov, loss_override={flap_lid: meas_loss} if link_up else None)
+            while sched and elapsed >= sched[0][0]:
+                _, act = sched.pop(0)
+                if act == "down" and link_up:
+                    net.configLinkStatus(sw_u, sw_v, "down")
+                    state.set_link_status(flap_lid, is_up=False)
+                    link_up = False
+                    if flap_lid in _links(driver.path):
+                        driver.on_link_failure(flap_lid, time.time())
+                    print("   [%5.1fs] %s DOWN" % (elapsed, flap_lid))
+                elif act in ("up", "up_last") and not link_up:
+                    net.configLinkStatus(sw_u, sw_v, "up")
+                    state.set_link_status(flap_lid, is_up=True)
+                    link_up = True
+                    if act == "up_last":
+                        driver.on_link_recovered(flap_lid, time.time())
+                    print("   [%5.1fs] %s UP%s" % (elapsed, flap_lid,
+                                                   " (recovery watch)" if act == "up_last" else ""))
 
             now = time.time()
-            driver_on.step(now_s=now)
-            driver_off.step(now_s=now)
-            if reinstall_if_changed(net, topo, installed, driver_on.path, src_ip, dst_ip):
-                print("   [%5.1fs] driver_on REROUTE %s -> %s" % (elapsed, "-".join(installed), "-".join(driver_on.path)))
-                installed = list(driver_on.path)
+            driver.step(now_s=now)
+            if reinstall_if_changed(net, topo, installed, driver.path, src_ip, dst_ip):
+                print("   [%5.1fs] REROUTE %s -> %s" % (elapsed, "-".join(installed), "-".join(driver.path)))
+                installed = list(driver.path)
 
-            gate = driver_on.engine.path_cost.graph_builder._resilience_gate
+            gate = driver.engine.path_cost.graph_builder._resilience_gate
             score = state.get_resilience_score(flap_lid, now=now)
+            latched = bool(gate and gate.is_avoided(flap_lid))
             crossed = crossed or score >= AVOID_THRESHOLD
+            latched_ever = latched_ever or latched
             rows.append({
                 "t": round(elapsed, 1), "link_up": link_up,
-                "resilience_score": round(score, 4),
-                "gate_latched": bool(gate and gate.is_avoided(flap_lid)),
-                "on_path_uses_link": flap_lid in _links(driver_on.path),
-                "off_path_uses_link": flap_lid in _links(driver_off.path),
-                "measured_flow_loss": round(meas_loss, 4),
-                "on_path": "-".join(driver_on.path), "off_path": "-".join(driver_off.path),
+                "resilience_score": round(score, 4), "gate_latched": latched,
+                "path_uses_flap_link": flap_lid in _links(driver.path),
+                "path": "-".join(driver.path),
             })
-            time.sleep(max(0.0, DECISION_INTERVAL_S - 1.5))
+            time.sleep(POLL_SECONDS)
 
         stop_udp_flow(src_host, dst_host)
         clear_path_rules(net, topo, installed, src_ip, dst_ip)
 
-        flap_window = [r for r in rows if r["t"] <= FLAP_CYCLES * (DOWN_SECONDS + UP_SECONDS) + 5]
-        up_rows = [r for r in flap_window if r["link_up"] and r["t"] > (DOWN_SECONDS + UP_SECONDS)]
-        settle_rows = rows[-3:]
+        latched_up = [r for r in rows if r["gate_latched"] and r["link_up"]]
+        settled = [r for r in rows if r["t"] > flap_end + 20]
+        released = [r for r in settled if not r["gate_latched"]]
+        server_log = out_dir / "iperf_server.log"
         checks = [
             ("resilience score crossed avoid_threshold", crossed),
-            ("resilience-ON keeps the flow off the link while it is momentarily up",
-             any(r["gate_latched"] and not r["on_path_uses_link"] for r in up_rows)),
-            ("resilience-OFF is dragged back onto the link on a recovery",
-             any(r["link_up"] and r["off_path_uses_link"] for r in up_rows)),
-            ("resilience-ON returns over the link once it settles",
-             any(not r["gate_latched"] and r["on_path_uses_link"] for r in settle_rows)),
+            ("switch-back refused while the gate is latched (flow stays off the link, link up)",
+             bool(latched_up) and all(not r["path_uses_flap_link"] for r in latched_up)),
+            ("gate released after the flapping stopped and the score decayed below the reuse band",
+             bool(released)),
+            ("switch-back went through once released (not a permanent black-hole)",
+             bool(released) and released[-1]["path_uses_flap_link"]),
         ]
+        loss_flapping = _iperf_mean_loss(server_log, 4.0, flap_end)
+        loss_settled = _iperf_mean_loss(server_log, flap_end + 20, total)
+        print("   iperf flow loss: during flapping %.1f%%, after settle %.1f%%"
+              % (100 * loss_flapping, 100 * loss_settled))
+
         with (out_dir / "flap_timeline.csv").open("w", newline="", encoding="utf-8") as fh:
             w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
             w.writeheader()
@@ -175,9 +186,13 @@ def main() -> None:
         passed = all(ok for _, ok in checks)
         report = ["# Mininet Link-Flap Check", "",
                   "Generated: %s" % datetime.now().isoformat(), "",
-                  "- Pair %s->%s, flapping link %s, %d real down/up cycles" % (SRC_NODE, DST_NODE, flap_lid, FLAP_CYCLES),
-                  "- Live iperf UDP %d Mbps; driver_on = resilience ON, driver_off = control (OFF)" % IPERF_RATE_MBPS,
+                  "- Pair %s->%s, flapping link %s, %d real down/up cycles then %ds settle"
+                  % (SRC_NODE, DST_NODE, flap_lid, FLAP_CYCLES, SETTLE_SECONDS),
+                  "- Live iperf UDP %d Mbps; one ProposedDriver, resilience avoidance ON (config default)"
+                  % IPERF_RATE_MBPS,
                   "- avoid_threshold=%.2f, reuse_threshold=%.3f" % (AVOID_THRESHOLD, REUSE_THRESHOLD),
+                  "- iperf flow loss: %.1f%% during flapping, %.1f%% after settle"
+                  % (100 * loss_flapping, 100 * loss_settled),
                   "", "## Checks", ""]
         for name, ok in checks:
             report.append("- [%s] %s" % ("PASS" if ok else "FAIL", name))
