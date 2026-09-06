@@ -218,6 +218,13 @@ def test_evaluate_resilience_avoidance_moves_flow_off_a_gated_link(tmp_path):
     assert engine.evaluate_resilience_avoidance(src, dst, current_path, now=now) is None
 
 
+def _latch_flap_gate(engine, state, gated_link, now, transitions=16):
+    """Flap a link enough times to latch the resilience gate, RFC-2439 style."""
+    for i in range(transitions):
+        state.link_flap.record_transition(gated_link, now=now + i * 2.0)
+    engine.path_cost.graph_builder.build_weighted_graph(now=now + transitions * 2.0)
+
+
 def test_recovery_switchback_blocked_by_gate_keeps_its_watch_then_fires_on_release(tmp_path):
     """A link recovers (recovery watch opens) but is still resilience-gated:
     the switch-back is refused for now, the watch is NOT consumed, and once the
@@ -227,26 +234,30 @@ def test_recovery_switchback_blocked_by_gate_keeps_its_watch_then_fires_on_relea
     gated_link = link_id(original_path[0], original_path[1])
     now = 1000.0
 
-    for i in range(12):
-        state.record_loss_residual(gated_link, 0.0 if i < 6 else 0.12, now=now)
-    engine.path_cost.graph_builder.build_weighted_graph(now=now)
+    _latch_flap_gate(engine, state, gated_link, now)
     gate = engine.path_cost.graph_builder._resilience_gate
     if gate is None or not gate.is_avoided(gated_link):
         pytest.skip("gate did not latch for this pair's first hop")
 
     window = engine.recovery_manager.recovery_window_seconds
-    engine.begin_recovery_watch(src, dst, gated_link, original_path=original_path, now=now)
+    watch_start = now + 20.0
+    engine.begin_recovery_watch(src, dst, gated_link, original_path=original_path, now=watch_start)
 
-    # eligible on timing, but the original path is still gated -> refused, watch kept
-    blocked = engine.evaluate_recovery_switchback(src, dst, detour, now=now + window + 1)
-    assert blocked is None
-    assert (src, dst) in engine.recovery_links
+    # eligible on timing, but the original path is still gated -> refused, watch
+    # kept -- checked well past a naive "few recovery windows" bound, since RFC
+    # 2439 flap damping can legitimately hold a link ~1.5-2 min after a burst.
+    for probe in (window + 1, window + 25, window + 55):
+        t = watch_start + probe
+        engine.path_cost.graph_builder.build_weighted_graph(now=t)
+        if not gate.is_avoided(gated_link):
+            pytest.skip("flap gate decayed faster than the test assumed")
+        blocked = engine.evaluate_recovery_switchback(src, dst, detour, now=t)
+        assert blocked is None
+        assert (src, dst) in engine.recovery_links
 
-    # gate releases once the anomaly clears
-    later = now + window + 2
-    for _ in range(12):
-        state.record_loss_residual(gated_link, 0.0, now=later)
-    for t in range(0, 40, 4):  # let the suppress/reuse hysteresis decay out
+    # gate releases as the flap penalty decays below the reuse threshold
+    later = watch_start + 400.0
+    for t in range(0, 40, 4):
         engine.path_cost.graph_builder.build_weighted_graph(now=later + t)
     if gate.is_avoided(gated_link):
         pytest.skip("gate had not released within the test's decay window")
@@ -255,3 +266,28 @@ def test_recovery_switchback_blocked_by_gate_keeps_its_watch_then_fires_on_relea
     assert fired is not None
     assert fired["new_path"] == original_path
     assert (src, dst) not in engine.recovery_links
+
+
+def test_recovery_switchback_watch_drops_past_the_absolute_bound(tmp_path):
+    """A link still gated long past RESILIENCE_BLOCKED_SWITCHBACK_MAX_SECONDS
+    stops holding the watch open -- the safety valve against a permanent leak."""
+    engine, state, src, dst, original_path, detour = _make_engine(tmp_path)
+    gated_link = link_id(original_path[0], original_path[1])
+    now = 5000.0
+
+    _latch_flap_gate(engine, state, gated_link, now)
+    gate = engine.path_cost.graph_builder._resilience_gate
+    if gate is None or not gate.is_avoided(gated_link):
+        pytest.skip("gate did not latch for this pair's first hop")
+
+    engine.begin_recovery_watch(src, dst, gated_link, original_path=original_path, now=now)
+    bound = engine.RESILIENCE_BLOCKED_SWITCHBACK_MAX_SECONDS
+    step = 15.0
+    t = now
+    while t <= now + bound + 3 * step:
+        state.link_flap.record_transition(gated_link, now=t)  # keep it flapping -> never releases
+        engine.path_cost.graph_builder.build_weighted_graph(now=t)
+        engine.evaluate_recovery_switchback(src, dst, detour, now=t)
+        t += step
+    assert gate.is_avoided(gated_link)              # still a bad link
+    assert (src, dst) not in engine.recovery_links  # ... but the watch was let go

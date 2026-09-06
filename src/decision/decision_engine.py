@@ -35,11 +35,13 @@ class DecisionEngine:
 
     # A recovery-window switch-back that is eligible on timing but still
     # refused because the original path crosses a resilience-gated link keeps
-    # its watch open (instead of consuming it) for up to this many recovery
-    # windows, so the flow returns once the gate releases rather than being
-    # stranded on the detour. Past this, the watch is dropped -- a link that
-    # is still gated this long after recovery is not "recovered".
-    RESILIENCE_BLOCKED_SWITCHBACK_MAX_WINDOWS = 12
+    # its watch open (instead of consuming it) so the flow returns once the
+    # gate releases, rather than being stranded on the detour. The gate's own
+    # RFC-2439 flap damping can legitimately hold a link for ~1.5-2 min after
+    # a bad burst stops (suppress plateau + decay to the reuse threshold), so
+    # the watch has to outlive that; past this absolute bound it is dropped as
+    # a safety valve against a permanent leak.
+    RESILIENCE_BLOCKED_SWITCHBACK_MAX_SECONDS = 300.0
 
     def __init__(
         self,
@@ -458,9 +460,7 @@ class DecisionEngine:
             original_links = {self._link_id(u, v) for u, v in zip(original_path, original_path[1:])}
             if any(gb._resilience_gate.is_avoided(lid) for lid in original_links):
                 age = self.recovery_manager.get_recovery_age(link_id, now=now) or 0.0
-                max_age = (self.recovery_manager.recovery_window_seconds
-                           * self.RESILIENCE_BLOCKED_SWITCHBACK_MAX_WINDOWS)
-                if age <= max_age:
+                if age <= self.RESILIENCE_BLOCKED_SWITCHBACK_MAX_SECONDS:
                     return None  # keep watching -- gate may still release
                 # gate never released within the bounded watch: give up on it
                 self.recovery_manager.complete_recovery(link_id)
