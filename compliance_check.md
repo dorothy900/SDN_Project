@@ -2,12 +2,14 @@
 
 ## Summary
 
-**Overall Status: ✅ Weeks 1–6 implemented and passing (48/48 tests), structurally aligned with
-requirements — and, as of 2026-08-11, also verified against a real Mininet/OVS network, not just
-the offline simulation (see §4a).** This banner originally read "100% ALIGNED" when Weeks 3–6 were
-still placeholders (2026-07); see §"Final Verdict" at the bottom and
-`results/reports/experiment_validation_report.md` for what that claim didn't cover at the time and
-what's been verified against actual code since.
+**Overall Status: ✅ Weeks 1–6 implemented and passing (178 tests as of 2026-09-06; 48/48 when
+this banner was written), structurally aligned with requirements — and, from 2026-08-11 onward,
+also verified against a real Mininet/OVS network, not just the offline simulation (see §4a, and
+the 2026-09-06 real `tc netem` loss-signal validation in the last "Final Verdict" update).** This
+banner originally read "100% ALIGNED" when Weeks 3–6 were still placeholders (2026-07). The
+"Final Verdict" section at the bottom has three dated updates (2026-08-11, 08-24, 09-06) — read
+all three; earlier subsection dates and file paths are preserved as-written (dated journal),
+current paths are in `README.md`. See also `results/reports/experiment_validation_report.md`.
 
 ---
 
@@ -3323,3 +3325,70 @@ figures currently reconstructable from `results/*.csv` but not committed as
 code — same gap for `congestion.py`); re-running the corrected calibration
 sweep; deciding whether to fit or retire `compute_flow_metrics`'s Layer-2
 overlay once that data exists.
+
+---
+
+## Final Verdict — 2026-09-06 update
+
+The two paragraphs above still stand. This update covers the resilience-avoidance
+layer's rework and a repository restructure, both after 2026-09-01.
+
+**Resilience-avoidance layer, reworked and now real-traffic-validated:**
+- The avoidance gate was rewritten (`src/routing/resilience_gate.py`, new):
+  suppress/reuse hysteresis (RFC 2439, reuse = 0.375 x avoid) on a combined
+  resilience score, and a **finite additive penalty** (`GraphBuilder.
+  RESILIENCE_AVOID_PENALTY = 1000.0`) rather than edge removal — a link with no
+  alternative still carries traffic (no black-hole), plus a bounded-downside
+  give-up cap (`RESILIENCE_MAX_DETOUR_FACTOR = 4.0`).
+- `config/decision.yaml`: `resilience_avoidance.enabled` **false -> true**.
+  Verified byte-identical output on all 5 generalization suites bar
+  `failure_recovery` (which improves: proposed now stays off a link that flapped
+  during recovery). No existing scenario's links reach a nonzero resilience score.
+- Signal set trimmed to two: `get_resilience_score = max(flap, abnormal_loss)`.
+  `traffic_growth` **dropped** — it fired on any link under rising load and gated
+  the congested hotspot in `increasing_load`.
+- Live trigger added: `DecisionEngine.evaluate_resilience_avoidance` moves a flow
+  off a gated link on its current path (emergency reroute, no offered-load
+  correction). RYU app link-event gaps closed (`EventLinkDelete` /
+  `EventOFPPortStatus` / `EventLinkAdd` now all feed `set_link_status`).
+- Robustness pass (P1-P4): absolute-level loss term (`LOSS_LEVEL_CAP = 0.05`) for
+  chronic-stable-bad links with no shift; single-poll immunity (median + zero-std
+  fallback); correlated-flap discount (>=4 links in one 2s poll -> 0.25 weight);
+  the give-up cap above.
+- **Three latent clock bugs fixed** — all meant the flap score was silently 0.0
+  in every offline experiment before this session (synthetic clock not forwarded
+  through `set_link_condition`/`set_link_status`; `LinkFlapTracker` missing
+  transitions carried on `update_link_statistics`; `DynamicBaseline` rebuilding
+  the graph at wall-clock and evicting synthetic-timestamp samples).
+- **Real-hardware validation** (`scripts/mininet/abnormal_loss_check.py`, run
+  2026-09-01): real `tc netem loss 8%` + live iperf on pair 2->7's first hop,
+  **10/10 checks pass** — score crosses `avoid_threshold`, gate latches, flow
+  reroutes off the lossy link (measured flow loss 8.8% -> 0), gate releases under
+  hysteresis while the flow stays on the clean detour; both resilience-OFF
+  controls never reroute. First real-hardware validation of the loss signal path.
+  The link-flap real-hardware check (`scripts/mininet/link_flap_check.py`) has
+  been rewritten around the recovery-window switch-back but not yet re-run
+  successfully on the VM — the one remaining real-traffic gap.
+- New evidence experiment `experiments/resilience/resilience_avoidance.py`
+  (23/23 real GEANT pairs, abnormal_loss + chronic_loss: flow loss ~2.5% ->
+  ~0.2%, delay ~124 -> ~48 ms). New figures `resilience_avoidance.png`,
+  `resilience_sensitivity.png`.
+- **Loss-signal threshold calibration** (2026-09-06): `resilience_sensitivity.py`
+  extended with an ROC / Youden's-J search for the loss signal (was flap only).
+  Against synthetic ground truth, `LOSS_LEVEL_CAP = 0.05` at the config
+  `avoid_threshold = 0.57` gives TPR 0.89 / FPR 0.05; Youden-optimal for that cap
+  is threshold 0.44 (J 0.89), and a cap near 0.03 separates the classes better
+  (~0.99 / ~0.01). 0.05 is retained for its independent SPC/SLA grounding — the
+  misses are marginal (~1.5-2.5pp chronic excess) links the 3-sigma shift term
+  still catches once they worsen. Documented at `LossJitterTracker.LOSS_LEVEL_CAP`.
+
+**Repository restructure (`ed28ef4`, 2026-09-06):** flat `experiments/` (34
+files) split into `experiments/{scenarios,cost_formula,resilience}/`; `scripts/`
+split into `scripts/{ryu,mininet}/` (the `mininet_` filename prefix dropped).
+`experiments/` converted relative -> absolute imports. `experiment.py` and
+`tests/` unchanged (only ever imported top-level modules). No experiment logic,
+data, or figure changed — `make_figures` output is byte-identical across the
+commit. Paths cited in *this* file above are pre-restructure and left as-is (a
+dated journal); current paths are in `README.md`.
+
+**Test count: 178 passing** (was 48 on 2026-08-11, 124 on 2026-08-24).

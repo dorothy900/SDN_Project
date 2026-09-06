@@ -417,24 +417,31 @@ def make_resilience_avoidance_figure(plt) -> None:
 
 def make_resilience_figure(plt) -> None:
     """
-    2-panel resilience-avoidance threshold-selection figure, sourced from
-    experiments/resilience/resilience_sensitivity.py's ROC / Youden's-J search (300
-    randomized instances/class per half_life: positive = "genuinely
-    flapping", negative = "one legitimate transition", scored by
-    LinkFlapTracker.get_flap_score()).
+    Threshold-selection figure for BOTH resilience signals, from
+    experiments/resilience/resilience_sensitivity.py's ROC / Youden's-J
+    searches (300 randomized instances/class):
+      top row    -- flap signal (LinkFlapTracker.get_flap_score); positive =
+                    "genuinely flapping", negative = "one legitimate transition".
+      bottom row -- loss signal (LossJitterTracker.get_abnormal_loss_score);
+                    positive = "sustained excess loss", negative = 50% honestly
+                    priced / 50% one-or-two isolated bad polls, swept over
+                    LOSS_LEVEL_CAP.
     """
     roc_rows = _load_csv(Path("results/resilience_sensitivity/roc.csv"))
+    loss_roc = _load_csv(Path("results/resilience_sensitivity/roc_loss.csv"))
+    loss_caps_csv = _load_csv(Path("results/resilience_sensitivity/loss_cap_sensitivity.csv"))
     half_lives = sorted({float(r["half_life_seconds"]) for r in roc_rows})
     hl_colors = {5.0: "#94a3ab", 10.0: "#eda100", 20.0: "#2a78d6", 40.0: "#1baf7a", 60.0: "#8858c8"}
+    CONFIG_CAP = 0.05
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5.2))
+    fig, axes = plt.subplots(2, 2, figsize=(13, 10))
     fig.suptitle(
-        "resilience_sensitivity: ROC / Youden's-J search for avoid_threshold\n"
-        "(300 randomized instances/class per half_life)",
+        "resilience_sensitivity: ROC / Youden's-J threshold search for both resilience signals\n"
+        "(300 randomized synthetic instances/class)",
         fontsize=13,
     )
 
-    ax = axes[0]
+    ax = axes[0][0]
     ax.plot([0, 1], [0, 1], linestyle="--", color="#b0b6bf", linewidth=1, label="chance")
     for hl in half_lives:
         hl_rows = sorted((r for r in roc_rows if float(r["half_life_seconds"]) == hl),
@@ -445,12 +452,12 @@ def make_resilience_figure(plt) -> None:
         ax.plot(fpr, tpr, color=hl_colors.get(hl, "#333333"), linewidth=1.8, label=label)
     ax.set_xlabel("FPR  (false positives on 'one legitimate transition')")
     ax.set_ylabel("TPR  (true positives on 'genuinely flapping')")
-    ax.set_title("(a) ROC curves per half_life")
+    ax.set_title("(a) flap signal: ROC per half_life")
     ax.legend(fontsize=8, loc="lower right")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.02, 1.02)
 
-    ax = axes[1]
+    ax = axes[0][1]
     hl20 = sorted((r for r in roc_rows if float(r["half_life_seconds"]) == 20.0),
                   key=lambda r: float(r["threshold"]))
     thresholds = [float(r["threshold"]) for r in hl20]
@@ -464,12 +471,55 @@ def make_resilience_figure(plt) -> None:
     ax.axvline(0.70, color="#94a3ab", linestyle=":", linewidth=1.2, label="previous hand-picked default = 0.70")
     ax.set_xlabel("avoid_threshold")
     ax.set_ylabel("Youden's J = TPR - FPR")
-    ax.set_title("(b) half_life=20s (config default): J vs threshold")
+    ax.set_title("(b) flap signal, half_life=20s: J vs threshold")
     ax.legend(fontsize=8, loc="lower left")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.05, 1.08)
 
-    fig.tight_layout(rect=(0, 0, 1, 0.88))
+    ax = axes[1][0]
+    ax.plot([0, 1], [0, 1], linestyle="--", color="#b0b6bf", linewidth=1, label="chance")
+    caps = sorted({float(r["loss_level_cap"]) for r in loss_roc})
+    cap_colors = {0.02: "#94a3ab", 0.03: "#eda100", 0.04: "#1baf7a", 0.05: "#2a78d6",
+                  0.07: "#d1604d", 0.10: "#8858c8"}
+    for cap in caps:
+        cap_rows = sorted((r for r in loss_roc if abs(float(r["loss_level_cap"]) - cap) < 1e-9),
+                          key=lambda r: float(r["threshold"]))
+        fpr = [float(r["fpr"]) for r in cap_rows]
+        tpr = [float(r["tpr"]) for r in cap_rows]
+        label = f"LOSS_LEVEL_CAP={cap:.2f}" + ("  (config)" if abs(cap - CONFIG_CAP) < 1e-9 else "")
+        lw = 2.4 if abs(cap - CONFIG_CAP) < 1e-9 else 1.5
+        ax.plot(fpr, tpr, color=cap_colors.get(cap, "#333333"), linewidth=lw, label=label)
+    ax.set_xlabel("FPR  (honest pricing / isolated bad polls)")
+    ax.set_ylabel("TPR  (sustained excess loss)")
+    ax.set_title("(c) loss signal: ROC per LOSS_LEVEL_CAP")
+    ax.legend(fontsize=8, loc="lower right")
+    ax.set_xlim(-0.02, 1.02)
+    ax.set_ylim(-0.02, 1.02)
+
+    ax = axes[1][1]
+    cfg_rows = sorted((r for r in loss_roc if abs(float(r["loss_level_cap"]) - CONFIG_CAP) < 1e-9),
+                      key=lambda r: float(r["threshold"]))
+    t = [float(r["threshold"]) for r in cfg_rows]
+    j = [float(r["youden_j"]) for r in cfg_rows]
+    ax.plot(t, j, color="#2a78d6", linewidth=1.8)
+    j_best = max(range(len(j)), key=lambda i: j[i])
+    ax.axvline(t[j_best], color="#1baf7a", linestyle=":", linewidth=1.3,
+               label=f"Youden-optimal = {t[j_best]:.2f} (J={j[j_best]:.2f})")
+    ax.axvline(0.57, color="#e34948", linestyle="--", linewidth=1.4, label="config avoid_threshold = 0.57")
+    cfg_cap_row = next((r for r in loss_caps_csv if abs(float(r["loss_level_cap"]) - CONFIG_CAP) < 1e-9), None)
+    if cfg_cap_row is not None:
+        ax.set_title("(d) loss signal, LOSS_LEVEL_CAP=0.05: J vs threshold\n"
+                     "at 0.57: TPR=%.2f, FPR=%.2f"
+                     % (float(cfg_cap_row["tpr_at_config_0.57"]), float(cfg_cap_row["fpr_at_config_0.57"])))
+    else:
+        ax.set_title("(d) loss signal, LOSS_LEVEL_CAP=0.05: J vs threshold")
+    ax.set_xlabel("avoid_threshold")
+    ax.set_ylabel("Youden's J = TPR - FPR")
+    ax.legend(fontsize=8, loc="lower left")
+    ax.set_xlim(-0.02, 1.02)
+    ax.set_ylim(-0.05, 1.08)
+
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
     out = OUTPUT_DIR / "resilience_sensitivity.png"
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -477,19 +527,30 @@ def make_resilience_figure(plt) -> None:
 
 
 def make_vif_figure(plt) -> None:
-    # NOTE: these four VIFs are the *scoped* recompute over the residual-priced
-    # variables (delay_residual / loss_residual, not raw delay_ms / loss --
-    # those are collinear with utilisation by construction, VIF > 600, see
-    # results/joint_independence_matrix/joint_report.md). The scoped recompute
-    # was done ad-hoc during the independence workstream and is not reproduced
-    # by any committed script; the numbers here are transcribed from
-    # compliance_check.md's VIF section (also in methodology_narrative_outline.md
-    # Part 1). To make it reproducible, add a script that reads
-    # results/joint_independence_matrix/joint_samples.csv and runs VIF over
-    # [utilization, delay_residual, loss_residual, churn_score].
-    fig, ax = plt.subplots(figsize=(8, 4.2))
+    """
+    Scoped VIF over the 4 variables the 7-weight formula prices from a
+    residual/independent angle (delay_residual / loss_residual, not raw
+    delay_ms / loss -- those are collinear with utilisation by construction,
+    VIF > 200, see results/joint_independence_matrix/joint_report.md).
+
+    Reads results/hybrid_congestion_churn_matrix/scoped_vif.csv, written by
+    experiments/cost_formula/hybrid_congestion_churn_matrix.py. If that file
+    is missing (the experiment needs the real independence-check datasets to
+    run), falls back to the values transcribed from compliance_check.md's VIF
+    section and labels the figure accordingly.
+    """
     labels = ["utilization", "delay_residual", "loss_residual", "churn_score"]
-    values = [2.055, 2.293, 2.836, 1.020]
+    scoped = Path("results/hybrid_congestion_churn_matrix/scoped_vif.csv")
+    if scoped.exists():
+        scoped_rows = _load_csv(scoped)
+        by_var = {r["variable"]: float(r["vif"]) for r in scoped_rows}
+        values = [by_var[v] for v in labels]
+        provenance = "computed by hybrid_congestion_churn_matrix.py (n=%s)" % scoped_rows[0]["n"]
+    else:
+        values = [2.055, 2.293, 2.836, 1.020]
+        provenance = "transcribed from compliance_check.md (n=213) -- run hybrid_congestion_churn_matrix.py to recompute"
+
+    fig, ax = plt.subplots(figsize=(8, 4.4))
     colors = ["#2a78d6", "#2a78d6", "#e34948", "#1baf7a"]
     bars = ax.barh(labels, values, color=colors, alpha=0.85)
     ax.bar_label(bars, fmt="%.3f", padding=4)
@@ -498,8 +559,8 @@ def make_vif_figure(plt) -> None:
     ax.set_xlim(0, 6.5)
     ax.set_xlabel("Variance Inflation Factor")
     ax.set_title(
-        "Closing VIF check: the 4 variables with real,\nnon-definitional relationships (n=213, post disjoint-link bugfix)",
-        fontsize=11.5,
+        "Scoped VIF: the 4 variables with real, non-definitional relationships\n%s" % provenance,
+        fontsize=10.5,
     )
     fig.tight_layout()
     out = OUTPUT_DIR / "vif.png"

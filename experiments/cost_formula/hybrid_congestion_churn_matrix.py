@@ -263,6 +263,19 @@ def run(output_dir: Path = Path("results/hybrid_congestion_churn_matrix")) -> Di
 
     # --- PCA on the 4 congestion-chain variables (u, delay_residual, loss_residual, churn) ---
     pca_vars = ["utilization", "delay_residual", "loss_residual", "churn_score"]
+
+    # Scoped VIF over just those 4 -- the variables the 7-weight formula actually
+    # prices from a residual/independent angle (raw delay_ms/loss are collinear
+    # with utilization by construction, VIF > 200, see joint_independence_matrix).
+    # This is the number results/figures/vif.png plots; written to its own CSV so
+    # the figure reads a computed value rather than a transcribed one.
+    scoped_vifs = variance_inflation_factors({v: data[v] for v in pca_vars})
+    with (output_dir / "scoped_vif.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["variable", "vif", "n"])
+        for name, vif in scoped_vifs.items():
+            w.writerow([name, f"{vif:.4f}", n])
+    print("Wrote", output_dir / "scoped_vif.csv")
     X = np.column_stack([data[v] for v in pca_vars])
     mean = X.mean(axis=0)
     std = X.std(axis=0, ddof=1)

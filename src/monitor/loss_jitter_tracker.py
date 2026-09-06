@@ -42,9 +42,13 @@ class LossJitterTracker:
     # (Mathis et al.) and is already severely degraded by 2-3% loss; transit
     # SLAs guarantee <0.1%. A link 5pp worse than its load predicts is
     # unambiguously faulty in any operating regime, so this is a saturation
-    # point, not a hand-tuned trip threshold. (A ROC calibration of this cap,
-    # analogous to resilience_sensitivity.py's search for the flap
-    # avoid_threshold, is noted as follow-up in that module's docstring.)
+    # point, not a hand-tuned trip threshold. resilience_sensitivity.py's
+    # loss-signal ROC search confirms it is a slightly conservative choice:
+    # against synthetic ground truth, 0.05 gives TPR 0.89 / FPR 0.05 at the
+    # config avoid_threshold 0.57, versus ~0.99 / ~0.01 near a cap of 0.03.
+    # 0.05 is kept for its independent SPC/SLA grounding above -- the misses
+    # are marginal (~1.5-2.5pp chronic excess) links the 3-sigma shift term
+    # still catches once they worsen.
     LOSS_LEVEL_CAP = 0.05
 
     def __init__(self, window_seconds: float = 60.0, saturation: float = 0.20, min_samples: int = 3):

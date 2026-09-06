@@ -24,14 +24,17 @@ picking a trip point (e.g. IEEE 9531440's m-sample-delay-timer approach) --
 still synthetic ground truth, same caveat as above, but now a data-driven
 threshold instead of a single validated operating point.
 
-Scope: this module only calibrates the *flap* signal (LinkFlapTracker). The
-loss signal's two knobs -- LossJitterTracker.SIGMA_CAP (shift term) and
-LOSS_LEVEL_CAP (absolute-level term, added for the "chronic, stable, no
-shift" case) -- are currently set from statistical-process-control / SLA
-convention (see their docstrings), not from an ROC search here. Extending
-this search to those, with a "genuine sustained degradation" positive class
-and an "honest congestion + baseline noise" negative class, is a documented
-follow-up.
+Both resilience signals are calibrated here. The flap search (below) sweeps
+LinkFlapTracker's half_life / avoid_threshold; the loss search (further
+down, _roc_for_loss_signal) does the same for
+LossJitterTracker.get_abnormal_loss_score and its LOSS_LEVEL_CAP knob, with
+a "genuine sustained degradation" positive class and a negative class that
+mixes an honestly-priced link (residual ~ 0 plus estimation noise) with a
+link that had one or two isolated bad polls (the single-poll false positive
+the P2 guard exists for). Same caveat as the flap search: synthetic ground
+truth, a principled operating point rather than an independently
+real-traffic-validated one (the Mininet checks in scripts/mininet/ cover
+that side).
 
 Run as: python3 -m experiments.resilience.resilience_sensitivity
 """
@@ -40,9 +43,10 @@ from __future__ import annotations
 import csv
 import random
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from src.monitor.link_flap_tracker import LinkFlapTracker
+from src.monitor.loss_jitter_tracker import LossJitterTracker
 
 HALF_LIFE_GRID = [5.0, 10.0, 20.0, 40.0, 60.0]
 AVOID_THRESHOLD_GRID = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
@@ -194,6 +198,118 @@ def _roc_for_half_life(half_life_seconds: float, rng: random.Random) -> List[Dic
     return roc_rows
 
 
+# --- Loss-signal ROC / Youden's J threshold search ------------------------
+#
+# Same methodology as the flap search above, applied to the other resilience
+# signal: LossJitterTracker.get_abnormal_loss_score, scored on synthetic
+# loss-residual series (measured loss minus congestion_model's
+# utilisation-predicted loss) with known ground truth.
+#
+#   positive class  -- a link whose residual is genuinely, persistently
+#                      elevated (a real fault: 1.5..12 pp of loss beyond what
+#                      load explains), with a random onset anywhere in the
+#                      first half of the window (chronic-from-the-start
+#                      through shifted-mid-window).
+#   negative class  -- half honestly-priced links (residual ~ 0 + estimation
+#                      noise, small congestion-model bias) and half links with
+#                      one or two isolated bad polls against an otherwise
+#                      clean window (the case the P2 single-poll guard exists
+#                      for).
+#
+# The knob under test is LOSS_LEVEL_CAP (the absolute-level term's saturation
+# point). SIGMA_CAP (the 3-sigma shift term) is left at its SPC-convention
+# value -- the score is max(shift, level), so the level term is what a
+# threshold sweep actually moves here.
+
+LOSS_WINDOW_SECONDS = 60.0          # LossJitterTracker default window
+LOSS_SAMPLE_INTERVAL_S = 2.0        # config/topology.yaml monitoring.interval_seconds
+LOSS_SAMPLES_PER_WINDOW = int(LOSS_WINDOW_SECONDS / LOSS_SAMPLE_INTERVAL_S)
+
+DEGRADED_EXCESS_RANGE = (0.015, 0.12)      # sustained excess loss, 1.5pp .. 12pp
+DEGRADED_ONSET_FRAC_RANGE = (0.0, 0.5)     # 0.0 = bad from window start; up to mid-window
+MEASUREMENT_NOISE_RANGE = (0.002, 0.008)   # per-poll residual measurement noise (std)
+
+HONEST_BIAS_RANGE = (-0.003, 0.006)        # congestion-model over/under-estimate
+HONEST_NOISE_RANGE = (0.002, 0.012)
+BLIP_COUNT_CHOICES = (1, 2)
+BLIP_MAGNITUDE_RANGE = (0.03, 0.10)
+BLIP_FRACTION_OF_NEGATIVES = 0.5
+
+LOSS_LEVEL_CAP_GRID = [0.02, 0.03, 0.04, 0.05, 0.07, 0.10]
+CONFIG_AVOID_THRESHOLD = 0.57              # config/decision.yaml resilience_avoidance.avoid_threshold
+
+
+def _degraded_residual_series(rng: random.Random) -> List[float]:
+    n = LOSS_SAMPLES_PER_WINDOW
+    excess = rng.uniform(*DEGRADED_EXCESS_RANGE)
+    onset = int(rng.uniform(*DEGRADED_ONSET_FRAC_RANGE) * n)
+    noise = rng.uniform(*MEASUREMENT_NOISE_RANGE)
+    return [max(0.0, rng.gauss(excess if i >= onset else 0.0, noise)) for i in range(n)]
+
+
+def _honest_residual_series(rng: random.Random) -> List[float]:
+    n = LOSS_SAMPLES_PER_WINDOW
+    bias = rng.uniform(*HONEST_BIAS_RANGE)
+    noise = rng.uniform(*HONEST_NOISE_RANGE)
+    return [rng.gauss(bias, noise) for _ in range(n)]
+
+
+def _blip_residual_series(rng: random.Random) -> List[float]:
+    n = LOSS_SAMPLES_PER_WINDOW
+    noise = rng.uniform(*HONEST_NOISE_RANGE)
+    series = [rng.gauss(0.0, noise) for _ in range(n)]
+    for idx in rng.sample(range(n), rng.choice(BLIP_COUNT_CHOICES)):
+        series[idx] = rng.uniform(*BLIP_MAGNITUDE_RANGE)
+    return series
+
+
+def _score_series(series: List[float], level_cap: float) -> float:
+    """Feed one residual series through a fresh LossJitterTracker at the given
+    LOSS_LEVEL_CAP and return get_abnormal_loss_score at the end of the window."""
+    original = LossJitterTracker.LOSS_LEVEL_CAP
+    LossJitterTracker.LOSS_LEVEL_CAP = level_cap
+    try:
+        tracker = LossJitterTracker()
+        for i, residual in enumerate(series):
+            tracker.record_loss_residual("link", residual, now=i * LOSS_SAMPLE_INTERVAL_S)
+        return tracker.get_abnormal_loss_score("link", now=(len(series) - 1) * LOSS_SAMPLE_INTERVAL_S)
+    finally:
+        LossJitterTracker.LOSS_LEVEL_CAP = original
+
+
+def _loss_scores(rng: random.Random, level_cap: float) -> Tuple[List[float], List[float]]:
+    positive = [_score_series(_degraded_residual_series(rng), level_cap) for _ in range(N_ROC_INSTANCES)]
+    negative = [
+        _score_series(
+            _blip_residual_series(rng) if rng.random() < BLIP_FRACTION_OF_NEGATIVES
+            else _honest_residual_series(rng),
+            level_cap,
+        )
+        for _ in range(N_ROC_INSTANCES)
+    ]
+    return positive, negative
+
+
+def _rates_at(positive: List[float], negative: List[float], threshold: float) -> Tuple[float, float]:
+    tpr = sum(s >= threshold for s in positive) / len(positive)
+    fpr = sum(s >= threshold for s in negative) / len(negative)
+    return tpr, fpr
+
+
+def _roc_for_loss_cap(positive: List[float], negative: List[float], level_cap: float) -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+    for thr in ROC_THRESHOLD_GRID:
+        tpr, fpr = _rates_at(positive, negative, thr)
+        rows.append({
+            "loss_level_cap": level_cap,
+            "threshold": thr,
+            "tpr": round(tpr, 4),
+            "fpr": round(fpr, 4),
+            "youden_j": round(tpr - fpr, 4),
+        })
+    return rows
+
+
 def main() -> None:
     output_dir = Path("results/resilience_sensitivity")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -261,8 +377,56 @@ def main() -> None:
         f"\nOverall best (half_life, avoid_threshold) by Youden's J: "
         f"half_life={overall_best['half_life_seconds']:.1f}s, avoid_threshold={overall_best['threshold']:.2f} "
         f"(TPR={overall_best['tpr']:.3f}, FPR={overall_best['fpr']:.3f}, J={overall_best['youden_j']:.3f}) "
-        f"-- vs current config defaults half_life=20.0s, avoid_threshold=0.7"
+        f"-- vs current config defaults half_life=20.0s, avoid_threshold=0.57"
     )
+
+    # --- Loss-signal ROC ------------------------------------------------
+    loss_rng = random.Random(ROC_RNG_SEED)
+    loss_roc_rows: List[Dict[str, object]] = []
+    loss_cap_rows: List[Dict[str, object]] = []
+    for level_cap in LOSS_LEVEL_CAP_GRID:
+        positive, negative = _loss_scores(loss_rng, level_cap)
+        cap_roc = _roc_for_loss_cap(positive, negative, level_cap)
+        loss_roc_rows.extend(cap_roc)
+        best = max(cap_roc, key=lambda r: r["youden_j"])
+        tpr_cfg, fpr_cfg = _rates_at(positive, negative, CONFIG_AVOID_THRESHOLD)
+        loss_cap_rows.append({
+            "loss_level_cap": level_cap,
+            "best_threshold": best["threshold"],
+            "best_tpr": best["tpr"],
+            "best_fpr": best["fpr"],
+            "best_youden_j": best["youden_j"],
+            "tpr_at_config_0.57": round(tpr_cfg, 4),
+            "fpr_at_config_0.57": round(fpr_cfg, 4),
+            "youden_j_at_config_0.57": round(tpr_cfg - fpr_cfg, 4),
+        })
+
+    with (output_dir / "roc_loss.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(loss_roc_rows[0].keys()))
+        w.writeheader()
+        w.writerows(loss_roc_rows)
+    print("\nWrote", output_dir / "roc_loss.csv")
+    with (output_dir / "loss_cap_sensitivity.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(loss_cap_rows[0].keys()))
+        w.writeheader()
+        w.writerows(loss_cap_rows)
+    print("Wrote", output_dir / "loss_cap_sensitivity.csv")
+
+    print("\nLoss signal (get_abnormal_loss_score) ROC per LOSS_LEVEL_CAP "
+          f"({N_ROC_INSTANCES} instances/class; negative = 50% honest, 50% 1-2 bad polls):")
+    for r in loss_cap_rows:
+        marker = "  <- config" if abs(r["loss_level_cap"] - LossJitterTracker.LOSS_LEVEL_CAP) < 1e-9 else ""
+        print(f"  LOSS_LEVEL_CAP={r['loss_level_cap']:.2f}  best_threshold={r['best_threshold']:.2f} "
+              f"(J={r['best_youden_j']:.3f}, TPR={r['best_tpr']:.3f}, FPR={r['best_fpr']:.3f});  "
+              f"at config 0.57: TPR={r['tpr_at_config_0.57']:.3f} FPR={r['fpr_at_config_0.57']:.3f}"
+              f"{marker}")
+    cfg_cap = next((r for r in loss_cap_rows
+                    if abs(r["loss_level_cap"] - LossJitterTracker.LOSS_LEVEL_CAP) < 1e-9), None)
+    if cfg_cap is not None:
+        print(f"\nAt the config LOSS_LEVEL_CAP={LossJitterTracker.LOSS_LEVEL_CAP:.2f}, Youden's J is maximised "
+              f"at threshold {cfg_cap['best_threshold']:.2f} (J={cfg_cap['best_youden_j']:.3f}); the config "
+              f"avoid_threshold 0.57 gives TPR={cfg_cap['tpr_at_config_0.57']:.3f}, "
+              f"FPR={cfg_cap['fpr_at_config_0.57']:.3f}.")
 
 
 if __name__ == "__main__":
