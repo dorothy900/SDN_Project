@@ -1,31 +1,26 @@
 #!/usr/bin/env python3
 """
-Resilience Gate - stateful suppress/reuse hysteresis + latch persistence over
-the combined resilience score (NetworkState.get_resilience_score: max of
-flap / abnormal-loss / traffic-growth).
+Resilience Gate - decides which links the resilience layer avoids, given each
+link's combined resilience score (NetworkState.get_resilience_score = max of
+the flap and abnormal-loss signals).
 
-Why a second hysteresis band on top of the signals' own: LinkFlapTracker
-already has RFC-2439-style suppress/reuse hysteresis, but only around its
-*pin at 1.0* -- below suppress_threshold it returns a raw decaying fraction,
-and abnormal-loss / traffic-growth have no hysteresis at all. A link whose
-combined score sits near avoid_threshold would therefore toggle in and out
-of avoidance on every graph rebuild, re-introducing exactly the path churn
-this layer exists to prevent. This gate adds a signal-independent band on
-the combined score at RFC 2439's own reuse/suppress ratio (750/2000 =
-0.375): once a link is avoided it stays avoided until its resilience score
-falls all the way to reuse_threshold, not merely back under avoid_threshold.
+Two pieces of state on top of the raw score:
 
-Why also a persistence delay before latching: a one-window blip -- a single
-noisy poll, or a congestion_model mis-calibration for one link that briefly
-pushes its loss residual up -- should not structurally deflect traffic. The
-score has to stay above avoid_threshold *continuously* for persist_seconds
-before the gate latches, the same shape as the project's PersistenceChecker
-for congestion.
+  hysteresis - once a link is avoided it stays avoided until its score decays
+    all the way to reuse_threshold (RFC 2439's own reuse/suppress ratio,
+    0.375 x avoid_threshold), not merely back under avoid_threshold. Without
+    this a score sitting near avoid_threshold would toggle a link in and out
+    of avoidance on every graph rebuild -- the churn this layer exists to
+    remove.
 
-The gate only decides *which* links to avoid. How avoidance is applied -- a
-large finite cost penalty rather than structural edge removal, so a link
-with no alternative still carries traffic instead of black-holing it -- is
-GraphBuilder's concern (see GraphBuilder.RESILIENCE_AVOID_PENALTY).
+  persist_seconds - the score must stay above avoid_threshold *continuously*
+    for this long before the gate latches (default 0 = latch immediately).
+    An extra guard for known-flaky telemetry; same shape as the project's
+    PersistenceChecker for congestion.
+
+The gate only picks the links. How avoidance is applied -- a finite cost
+penalty, not edge removal, so a link with no alternative still carries
+traffic -- is GraphBuilder's concern (RESILIENCE_AVOID_PENALTY).
 """
 from __future__ import annotations
 

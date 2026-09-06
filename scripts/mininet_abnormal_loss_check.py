@@ -102,7 +102,7 @@ def _run_phase(net, topo, phase, degrade_from_start, resilience, out_dir, rows):
         tele.poll(gap_s=2.0, loss_override={bad_link: measured_loss})
 
         now = time.time()
-        res = driver.step(now_s=now)
+        driver.step(now_s=now)
         changed = reinstall_if_changed(net, topo, installed, driver.path, src_ip, dst_ip)
         if changed:
             print("   [%5.1fs] REROUTE %s -> %s" % (elapsed, "-".join(installed), "-".join(driver.path)))

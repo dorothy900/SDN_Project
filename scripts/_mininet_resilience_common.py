@@ -112,9 +112,9 @@ class LinkTelemetry:
     """
 
     def __init__(self, net, topo, links: List[Tuple[str, str]]):
-        self.net, self.topo, self.state = net, topo, None
+        self.state: Optional[NetworkState] = None
         self.collector = StatisticsCollector(output_dir=PROJECT_ROOT / "results" / "mininet_resilience")
-        self.plan = []  # (link_id, switch_name, port)
+        self.plan: List[Tuple[str, str, int]] = []  # (link_id, switch_name, ofport)
         for a, b in links:
             sw = net.get(topo.node_mapping[a][0])
             port = get_ofport(sw, net.get(topo.node_mapping[b][0]))
