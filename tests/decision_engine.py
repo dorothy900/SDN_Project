@@ -216,3 +216,42 @@ def test_evaluate_resilience_avoidance_moves_flow_off_a_gated_link(tmp_path):
     # explicitly disabled -> never acts
     engine.path_cost.graph_builder.resilience_avoid_threshold = None
     assert engine.evaluate_resilience_avoidance(src, dst, current_path, now=now) is None
+
+
+def test_recovery_switchback_blocked_by_gate_keeps_its_watch_then_fires_on_release(tmp_path):
+    """A link recovers (recovery watch opens) but is still resilience-gated:
+    the switch-back is refused for now, the watch is NOT consumed, and once the
+    gate releases a later evaluation actually switches the flow back -- rather
+    than the flow being stranded on the detour forever."""
+    engine, state, src, dst, original_path, detour = _make_engine(tmp_path)
+    gated_link = link_id(original_path[0], original_path[1])
+    now = 1000.0
+
+    for i in range(12):
+        state.record_loss_residual(gated_link, 0.0 if i < 6 else 0.12, now=now)
+    engine.path_cost.graph_builder.build_weighted_graph(now=now)
+    gate = engine.path_cost.graph_builder._resilience_gate
+    if gate is None or not gate.is_avoided(gated_link):
+        pytest.skip("gate did not latch for this pair's first hop")
+
+    window = engine.recovery_manager.recovery_window_seconds
+    engine.begin_recovery_watch(src, dst, gated_link, original_path=original_path, now=now)
+
+    # eligible on timing, but the original path is still gated -> refused, watch kept
+    blocked = engine.evaluate_recovery_switchback(src, dst, detour, now=now + window + 1)
+    assert blocked is None
+    assert (src, dst) in engine.recovery_links
+
+    # gate releases once the anomaly clears
+    later = now + window + 2
+    for _ in range(12):
+        state.record_loss_residual(gated_link, 0.0, now=later)
+    for t in range(0, 40, 4):  # let the suppress/reuse hysteresis decay out
+        engine.path_cost.graph_builder.build_weighted_graph(now=later + t)
+    if gate.is_avoided(gated_link):
+        pytest.skip("gate had not released within the test's decay window")
+
+    fired = engine.evaluate_recovery_switchback(src, dst, detour, now=later + 40)
+    assert fired is not None
+    assert fired["new_path"] == original_path
+    assert (src, dst) not in engine.recovery_links

@@ -33,6 +33,14 @@ class DecisionEngine:
     traffic policy (high-priority classes trigger earlier and skip persistence).
     """
 
+    # A recovery-window switch-back that is eligible on timing but still
+    # refused because the original path crosses a resilience-gated link keeps
+    # its watch open (instead of consuming it) for up to this many recovery
+    # windows, so the flow returns once the gate releases rather than being
+    # stranded on the detour. Past this, the watch is dropped -- a link that
+    # is still gated this long after recovery is not "recovered".
+    RESILIENCE_BLOCKED_SWITCHBACK_MAX_WINDOWS = 12
+
     def __init__(
         self,
         network_state: NetworkState,
@@ -438,6 +446,27 @@ class DecisionEngine:
             return None
 
         original_path = self.original_paths.get(pair)
+
+        # If the original path still crosses a link the resilience gate has
+        # latched, the switch-back is correctly refused for now -- but the
+        # watch is kept (up to RESILIENCE_BLOCKED_SWITCHBACK_MAX_WINDOWS) so a
+        # later step retries once the gate releases, rather than consuming the
+        # watch here and stranding the flow on the detour permanently.
+        gb = self.path_cost.graph_builder
+        if original_path and gb._resilience_gate is not None:
+            gb.build_weighted_graph(now=now)  # tick the gate (see evaluate_resilience_avoidance)
+            original_links = {self._link_id(u, v) for u, v in zip(original_path, original_path[1:])}
+            if any(gb._resilience_gate.is_avoided(lid) for lid in original_links):
+                age = self.recovery_manager.get_recovery_age(link_id, now=now) or 0.0
+                max_age = (self.recovery_manager.recovery_window_seconds
+                           * self.RESILIENCE_BLOCKED_SWITCHBACK_MAX_WINDOWS)
+                if age <= max_age:
+                    return None  # keep watching -- gate may still release
+                # gate never released within the bounded watch: give up on it
+                self.recovery_manager.complete_recovery(link_id)
+                self.recovery_links.pop(pair, None)
+                return None
+
         self.recovery_manager.complete_recovery(link_id)
         self.recovery_links.pop(pair, None)
         if not original_path or original_path == current_path:
