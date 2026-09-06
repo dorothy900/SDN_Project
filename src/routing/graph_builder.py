@@ -1,6 +1,27 @@
 #!/usr/bin/env python3
 """
-Graph Builder - Build deterministic routing graphs and candidate paths.
+Graph Builder - turn the live NetworkState into a weighted graph the router
+can run Dijkstra / k-shortest-paths on, deterministically.
+
+Each edge weight is the 7-term path-cost formula (_calculate_edge_cost):
+
+    alpha*utilization + beta*delay_residual + gamma*loss_residual
+  + delta*churn + epsilon*reliability + zeta*delay_jitter + eta*loss_jitter
+
+-- utilization plus six signals that price what utilization alone does not
+(residuals are measured-minus-model, so congestion is not double-counted;
+jitter terms price heteroscedasticity; churn prices link-level instability).
+Weights live in config/decision.yaml and are justified in
+experiments/cost_formula/. epsilon's term is effectively inert: a failed
+link is removed from the graph before costing, so reliability acts as a
+hard constraint rather than a soft cost, and the weight search / Pareto
+analysis are 6-dimensional (epsilon fixed) for that reason.
+
+On top of that, the optional resilience layer: build_weighted_graph() adds
+a finite RESILIENCE_AVOID_PENALTY to links the ResilienceGate has latched
+(priced, never removed -- a link with no alternative still carries traffic),
+and resilience_effective_graph() applies a bounded-detour give-up cap so
+avoidance can never route a flow onto a pathologically long path.
 """
 from __future__ import annotations
 

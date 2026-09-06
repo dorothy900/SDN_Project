@@ -1,7 +1,24 @@
 #!/usr/bin/env python3
 """
-Network State - central network state manager, exposing
-get_network_state() as the shared read interface for routing modules.
+Network State - the single read interface every routing / decision module
+goes through for "what does the network look like right now".
+
+It fronts the raw telemetry (LinkMonitor) and the derived per-link history
+trackers, and turns each into the normalized [0, 1] signals the cost
+formula and the resilience layer consume:
+
+  * link utilization / delay / loss                (LinkMonitor + history)
+  * delay- and loss-residual jitter                (DelayJitterTracker,
+                                                     LossJitterTracker)
+  * routing-decision churn                         (LinkChurnTracker)
+  * flap penalty, RFC-2439 style                   (LinkFlapTracker)
+  * get_resilience_score() = max(flap, abnormal-loss) -- the resilience
+    layer's trigger, deliberately separate from the 7-weight cost formula.
+
+Also applies the correlated-flap discount: >= CORRELATED_FLAP_MIN_LINKS
+distinct links transitioning inside one poll is treated as a controller-
+view artefact (each recorded at CORRELATED_FLAP_WEIGHT), not that many
+independent failures.
 """
 import json
 from collections import deque

@@ -1,6 +1,30 @@
 #!/usr/bin/env python3
 """
-Decision Engine - Coordinate stability-aware rerouting decisions.
+Decision Engine - the "Proposed" algorithm's control point: given a
+congestion, failure, or resilience trigger on some link, decide whether a
+flow actually reroutes, and to where.
+
+It owns no telemetry and no graph of its own -- it reads NetworkState and
+asks PathCost/GraphBuilder for candidate paths -- and layers the stability
+mechanisms this dissertation contributes on top of a plain shortest-path
+recompute:
+
+  * threshold + hysteresis (enter/release) + hold-down  -- when a link
+    counts as congested at all;
+  * persistence (leaky-bucket) + rolling change budget   -- damp reaction
+    to transient or bursty congestion;
+  * churn-adaptive minimum-improvement gate              -- a reroute must
+    clear a cost margin that grows with the candidate links' recent churn;
+  * emergency bypass for real link failures, and a recovery-window-
+    protected switch-back once a failed link returns;
+  * offered-load self-influence correction               -- price a
+    candidate path net of the moving flow's own contribution;
+  * priority-aware policy                                -- high-priority
+    traffic classes trigger earlier and skip persistence.
+
+evaluate_resilience_avoidance() is the separate resilience layer's hook
+(see resilience_gate.py): it moves a flow off a link the gate has latched
+as flapping / abnormally-lossy even when nothing above would fire.
 """
 
 from __future__ import annotations
