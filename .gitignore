@@ -1,6 +1,7 @@
 # Virtual Environment
 venv/
 env/
+.venv/
 ryu-env/
 
 # Python
@@ -36,5 +37,10 @@ results/
 .vscode/
 .idea/
 
+# Tooling / local state
+.pytest_cache/
+.claude/
+
 # Temporary
 /tmp/
+*.zip
