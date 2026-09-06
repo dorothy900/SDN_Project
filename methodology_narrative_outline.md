@@ -309,11 +309,18 @@ contents, pulled out of the four parts above:
    instances (Part 3) were drawn from the same limited 3-path contrast
    template (varying severities, not scenario *structure*) — so
    "generalizes to held-out instances" is narrower than "generalizes to
-   real-world scenario diversity." The Part 4 Pareto trials (churn/jitter
-   vs. congestion, built independently of that template) partially address
-   this but don't cover every dimension (e.g., no dedicated
-   reliability-dominant or multi-factor-conflict trials were built this
-   session).
+   real-world scenario diversity." The Part 4 Pareto trials, built
+   independently of that template, now exercise **each of the 5 searched
+   secondary weights** against alpha — delta (churn), zeta (delay-jitter),
+   gamma (loss-residual), eta (loss-jitter) — plus a **3-way multi-factor
+   trial** (congested vs churny vs jittery, no single secondary/alpha ratio
+   characterizing the boundary; all three links win some share of the
+   weight simplex, none Pareto-dominated). `epsilon` (reliability) is the
+   one formula weight deliberately not swept: a down link is removed from
+   the routing graph entirely — reliability is enforced as a hard
+   constraint, not a soft cost term — so epsilon never applies to a
+   candidate path. Residual gap: the trials still vary severity within a
+   fixed contrast structure, not scenario topology.
 
 ---
 

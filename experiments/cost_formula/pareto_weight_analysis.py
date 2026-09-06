@@ -7,6 +7,16 @@ actually dominates the other on every raw dimension, and where it doesn't,
 sweeps the weight simplex to characterize which weight regime prefers
 which path and where the boundary sits.
 
+Coverage: each of the 5 searched secondary weights is exercised against
+alpha (utilization) -- delta (churn), zeta (delay-jitter), gamma
+(loss-residual), eta (loss-jitter) -- plus one 3-way multi-factor trial
+(congested vs churny vs jittery) where no single secondary/alpha ratio
+characterizes the boundary and the whole weight vector decides. epsilon
+(reliability) is deliberately not swept: a down link is removed from the
+routing graph entirely (a hard constraint, not a soft cost), so epsilon
+never applies to any candidate path -- see weight_search_comparison.py's
+PARAM_ORDER comment.
+
 Run as: python3 -m experiments.cost_formula.pareto_weight_analysis
 """
 from __future__ import annotations
@@ -23,7 +33,6 @@ import numpy as np
 from src.monitor.models import LinkStatistics
 from src.monitor.network_state import NetworkState
 from src.routing.congestion_model import predicted_delay_ms, predicted_loss
-from src.routing.graph_builder import GraphBuilder
 
 from experiments.cost_formula.weight_search_comparison import PARAM_ORDER, normalize_weights
 
@@ -133,6 +142,102 @@ JITTER_VS_CONGESTION_TRIALS = [
 ]
 
 
+def build_loss_residual_vs_congestion(
+    seed: int, u_light: float, excess_loss: float, u_heavy: float
+) -> Tuple[NetworkState, float]:
+    """"lossy_light": low utilization but losing packets well above its
+    utilization-predicted rate (a soft-degrading link). "congested_clean":
+    high utilization, loss exactly as predicted. The trade-off gamma prices."""
+    state = NetworkState()
+    _seed(state, "congested_clean", u=u_heavy)
+    _seed(state, "lossy_light", u=u_light, loss=predicted_loss(u_light) + excess_loss)
+    return state, time.time()
+
+
+def build_loss_jitter_vs_congestion(
+    seed: int, u_light: float, loss_samples: List[float], u_heavy: float
+) -> Tuple[NetworkState, float]:
+    """"jittery_loss_light": low utilization, unstable loss residual (high
+    variance around its own mean). "congested_clean": high utilization,
+    perfectly predictable loss. The trade-off eta prices."""
+    state = NetworkState()
+    ts = time.time()
+    _seed(state, "congested_clean", u=u_heavy)
+    for i, loss in enumerate(loss_samples):
+        state.update_link_statistics(
+            LinkStatistics(
+                timestamp=datetime.fromtimestamp(ts + i * 2.0), link_id="jittery_loss_light",
+                utilization=u_light, rx_mbps=20.0, tx_mbps=18.0, status="up",
+                delay_ms=predicted_delay_ms(u_light), packet_loss=loss,
+            ),
+            now=ts + i * 2.0,
+        )
+    return state, ts + len(loss_samples) * 2.0
+
+
+LOSS_RESIDUAL_VS_CONGESTION_TRIALS = [
+    ("LD1", 0.20, 0.03, 0.60),
+    ("LD2", 0.30, 0.05, 0.75),
+    ("LD3", 0.15, 0.08, 0.50),
+]
+
+LOSS_JITTER_VS_CONGESTION_TRIALS = [
+    ("LJ1", 0.20, [0.005, 0.09, 0.005], 0.60),
+    ("LJ2", 0.30, [0.01, 0.12, 0.01], 0.75),
+]
+
+
+def build_multi_factor(seed: int) -> Tuple[NetworkState, float]:
+    """Three candidate links, each the best on a different axis and worst on
+    another -- no 2-way comparison captures it: which link wins depends on the
+    full alpha/delta/zeta weight vector at once, not one ratio.
+      congested   -- high utilization, otherwise clean
+      churny      -- low utilization, recently churned in/out of paths
+      jittery     -- low utilization, unstable delay
+    """
+    state = NetworkState()
+    ts = time.time()
+    _seed(state, "congested", u=0.80)
+    _seed(state, "churny", u=0.20)
+    for i in range(5):
+        state.record_link_churn("churny", timestamp=ts - 5 + i)
+    for i, d in enumerate([18.0, 95.0, 18.0, 95.0, 18.0]):
+        state.update_link_statistics(
+            LinkStatistics(
+                timestamp=datetime.fromtimestamp(ts + i * 2.0), link_id="jittery",
+                utilization=0.22, rx_mbps=20.0, tx_mbps=18.0, status="up",
+                delay_ms=d, packet_loss=predicted_loss(0.22),
+            ),
+            now=ts + i * 2.0,
+        )
+    return state, ts + 10.0
+
+
+def run_multi_factor(state: NetworkState, now: float, links: List[str],
+                     num_samples: int = 20000, sweep_seed: int = 0) -> Dict[str, object]:
+    """For a set of mutually non-dominated links, report the share of the
+    (normalized) weight simplex on which each link is the minimum-cost choice,
+    plus the pairwise Pareto-dominance check."""
+    raws = {lk: raw_dimension_values(state, lk, now) for lk in links}
+    dominated = {
+        lk: [other for other in links if other != lk and pareto_dominates(raws[other], raws[lk])]
+        for lk in links
+    }
+    rng = np.random.default_rng(sweep_seed)
+    raw_weights = rng.uniform(0.0, 1.0, size=(num_samples, len(PARAM_ORDER)))
+    wins = {lk: 0 for lk in links}
+    for i in range(num_samples):
+        weights = normalize_weights(raw_weights[i].tolist())
+        costs = {lk: weighted_cost(raws[lk], weights) for lk in links}
+        wins[min(costs, key=costs.get)] += 1
+    return {
+        "label": "multi_factor_3way",
+        "raw": raws,
+        "pareto_dominated_by": {lk: v for lk, v in dominated.items()},
+        "weight_space_win_share": {lk: round(wins[lk] / num_samples, 4) for lk in links},
+    }
+
+
 def run_dominance_and_sweep(
     label: str, state: NetworkState, now: float, link_a: str, link_b: str,
     secondary_weight: str, num_samples: int = 5000, sweep_seed: int = 0,
@@ -216,6 +321,35 @@ def main() -> None:
         results.append(run_dominance_and_sweep(
             f"jitter_vs_congestion_{name}", state, now, "jittery_light", "congested_clean", secondary_weight="zeta"
         ))
+
+    for name, u_light, excess_loss, u_heavy in LOSS_RESIDUAL_VS_CONGESTION_TRIALS:
+        state, now = build_loss_residual_vs_congestion(0, u_light, excess_loss, u_heavy)
+        results.append(run_dominance_and_sweep(
+            f"loss_residual_vs_congestion_{name}", state, now, "lossy_light", "congested_clean", secondary_weight="gamma"
+        ))
+
+    for name, u_light, loss_samples, u_heavy in LOSS_JITTER_VS_CONGESTION_TRIALS:
+        state, now = build_loss_jitter_vs_congestion(0, u_light, loss_samples, u_heavy)
+        results.append(run_dominance_and_sweep(
+            f"loss_jitter_vs_congestion_{name}", state, now, "jittery_loss_light", "congested_clean", secondary_weight="eta"
+        ))
+
+    # Multi-factor: 3 links, each best on a different axis -- no single
+    # secondary-vs-alpha ratio characterizes it, the whole weight vector does.
+    mf_state, mf_now = build_multi_factor(0)
+    multi_factor = run_multi_factor(mf_state, mf_now, ["congested", "churny", "jittery"])
+    results.append({
+        "label": multi_factor["label"],
+        "secondary_weight": "alpha+delta+zeta (joint)",
+        "dominance_status": (
+            "no link Pareto-dominated -- genuine 3-way trade-off"
+            if not any(multi_factor["pareto_dominated_by"].values())
+            else "at least one link dominated: %s" % multi_factor["pareto_dominated_by"]
+        ),
+        "fraction_weight_space_preferring_a": None,
+        "approx_boundary_ratio_secondary_over_alpha": None,
+        "weight_space_win_share": multi_factor["weight_space_win_share"],
+    })
 
     with (OUTPUT_DIR / "pareto_weight_analysis.csv").open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=[
