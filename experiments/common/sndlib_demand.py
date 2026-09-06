@@ -23,7 +23,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Optional
 
-_SNDLIB_XML_PATH = Path(__file__).resolve().parents[1] / "data" / "sndlib_geant.xml"
+_SNDLIB_XML_PATH = Path(__file__).resolve().parents[2] / "data" / "sndlib_geant.xml"
 _SNDLIB_NS = {"sndlib": "http://sndlib.zib.de/network"}
 
 # SNDlib's 2-letter-country-code node id -> our Geant2012.graphml node id,
@@ -145,7 +145,7 @@ def resolve_edge_demand_baseline(u: str, v: str) -> Optional[float]:
 # real-tier value.
 # ---------------------------------------------------------------------------
 
-_NOBEL_EU_XML_PATH = Path(__file__).resolve().parents[1] / "data" / "sndlib_nobel_eu.xml"
+_NOBEL_EU_XML_PATH = Path(__file__).resolve().parents[2] / "data" / "sndlib_nobel_eu.xml"
 
 # nobel-eu city node id -> our Geant2012.graphml node id. Includes cities
 # for countries already covered by the real tier (e.g. Berlin/Frankfurt/

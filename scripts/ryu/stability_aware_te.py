@@ -58,7 +58,7 @@ from ryu.lib import hub
 from ryu.ofproto import ofproto_v1_3
 from ryu.topology import event as topo_event
 
-from experiments.simulation_common import ProposedDriver, link_id as _pair_link_id
+from experiments.common.simulation_common import ProposedDriver, link_id as _pair_link_id
 from src.monitor.link_capacity import build_node_mapping, resolve_link_capacity_mbps
 from src.monitor.models import LinkStatistics, PortStatistics
 from src.monitor.network_state import NetworkState

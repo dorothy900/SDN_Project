@@ -31,7 +31,7 @@ from typing import Dict, List
 import networkx as nx
 
 from experiments.scenarios.failure_recovery_generalization import labeled_pairs_23
-from experiments.simulation_common import (
+from experiments.common.simulation_common import (
     SAMPLE_INTERVAL_S,
     build_network_state,
     link_id,

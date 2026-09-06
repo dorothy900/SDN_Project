@@ -12,12 +12,12 @@ Run complete experiment cycle:
 import argparse
 from pathlib import Path
 
-from experiments.baseline_comparison import BaselineComparison
-from experiments.decision_engine_check import DecisionEngineValidation
-from experiments.network_state_check import NetworkStateValidation
-from experiments.pilot_experiments import PilotExperimentRunner
-from experiments.stability import StabilityValidation
-from experiments.topology_check import TopologyValidation
+from experiments.validation.baseline_comparison import BaselineComparison
+from experiments.validation.decision_engine_check import DecisionEngineValidation
+from experiments.validation.network_state_check import NetworkStateValidation
+from experiments.validation.pilot_experiments import PilotExperimentRunner
+from experiments.validation.stability import StabilityValidation
+from experiments.validation.topology_check import TopologyValidation
 
 
 def main():

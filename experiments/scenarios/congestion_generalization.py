@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from experiments.scenarios.failure_recovery_generalization import labeled_pairs_23
-from experiments.simulation_common import (
+from experiments.common.simulation_common import (
     SAMPLE_INTERVAL_S,
     build_network_state,
     compute_flow_metrics,
@@ -21,7 +21,7 @@ from experiments.simulation_common import (
     make_drivers,
     set_link_condition,
 )
-from experiments.traffic_generator import FlowDefinition
+from experiments.common.traffic_generator import FlowDefinition
 
 BASELINE_UTILIZATION = 0.35
 SPIKE_UTILIZATION = 0.88

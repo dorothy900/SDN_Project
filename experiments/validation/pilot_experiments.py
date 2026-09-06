@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -23,7 +23,7 @@ from experiments.scenarios.failure_recovery import FailureRecoveryScenario
 from experiments.scenarios.increasing_load import IncreasingLoadScenario
 from experiments.scenarios.priority_policy import PriorityPolicyScenario
 from experiments.scenarios.stale_stats import StaleStatsScenario
-from experiments.traffic_generator import TrafficGenerator
+from experiments.common.traffic_generator import TrafficGenerator
 
 
 class PilotExperimentRunner:

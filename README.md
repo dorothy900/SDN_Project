@@ -99,7 +99,7 @@ python3 experiment.py --stage 6 --scenario all_plus_priority --repeat 5
 # -> results/pilot/scenario5/, folded into pilot_summary.csv / full_results_repeated.csv
 
 # Parameter sensitivity analysis (why the config/decision.yaml defaults are what they are)
-python3 -m experiments.sensitivity_analysis
+python3 -m experiments.cost_formula.sensitivity_analysis
 # resilience-layer evidence / ROC calibration
 python3 -m experiments.resilience.resilience_avoidance
 python3 -m experiments.resilience.resilience_sensitivity
@@ -145,17 +145,18 @@ sdn-dissertation/
  │   │   └── threshold_detector · persistence_checker · change_budget · path_cost · decision_logger
  │   └── stability/                 # stability_manager · failure_handler · recovery_manager · traffic_policy
  │
- ├── experiments/                   # simulation harness + all offline experiments
- │   ├── simulation_common.py       # shared static / dynamic / proposed driver harness
- │   ├── traffic_generator.py, sndlib_demand.py                # shared flow / demand model
- │   ├── {topology,network_state,decision_engine}_check.py, baseline_comparison.py, stability.py  # Stages 1-5
- │   ├── pilot_experiments.py       # Stage 6 orchestrator
- │   ├── sensitivity_analysis.py, independence_stats.py        # shared param sweep / stats toolkit
+ ├── experiments/                   # offline simulation harness + all experiments
+ │   ├── common/                    # shared: simulation_common (static/dynamic/proposed driver
+ │   │                              #   harness), traffic_generator, sndlib_demand, independence_stats
+ │   ├── validation/                # Stage 1-6 drivers: does the real src/ code reproduce the
+ │   │                              #   design? (topology/network_state/decision_engine checks,
+ │   │                              #   baseline_comparison, stability, pilot_experiments)
  │   ├── scenarios/                 # Experiments A-E + generalization / per-seed / per-sample variants
  │   │   ├── {increasing_load,congestion,failure_recovery,stale_stats,priority_policy}.py
  │   │   └── *_generalization.py    #   each scenario re-run over 23 real GEANT pairs x 5 seeds
- │   ├── cost_formula/              # weight_search_comparison, pareto_weight_analysis, *_independence*
- │   └── resilience/               # resilience_avoidance (evidence), resilience_sensitivity (ROC)
+ │   ├── cost_formula/              # weight_search_comparison, pareto_weight_analysis,
+ │   │                              #   sensitivity_analysis, *_independence* (7-weight formula justification)
+ │   └── resilience/                # resilience_avoidance (evidence), resilience_sensitivity (ROC)
  │
  ├── figures/                       # data-figure generation, run from the repo root:
  │   ├── make_figures.py            #   python3 -m figures.make_figures  -> results/figures/*.png

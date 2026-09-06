@@ -10,7 +10,7 @@ available in this environment to compare against directly.
 import numpy as np
 import pytest
 
-from experiments.independence_stats import (
+from experiments.common.independence_stats import (
     distance_correlation,
     permutation_test,
     spearman_rho,

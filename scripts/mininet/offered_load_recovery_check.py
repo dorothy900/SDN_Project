@@ -32,7 +32,7 @@ from src.monitor.network_state import NetworkState
 from src.monitor.statistics_collector import StatisticsCollector
 from src.monitor.models import LinkStatistics
 from src.decision.decision_engine import DecisionEngine
-from experiments.simulation_common import PRIMARY_PAIR, build_network_state
+from experiments.common.simulation_common import PRIMARY_PAIR, build_network_state
 
 OF_VERSION = "OpenFlow13"
 # The flow BEING EVALUATED for switchback -- this project's real

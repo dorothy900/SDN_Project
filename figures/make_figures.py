@@ -536,7 +536,7 @@ def make_vif_figure(plt) -> None:
     Reads results/hybrid_congestion_churn_matrix/scoped_vif.csv, written by
     experiments/cost_formula/hybrid_congestion_churn_matrix.py. If that file
     is missing (the experiment needs the real independence-check datasets to
-    run), falls back to the values transcribed from compliance_check.md's VIF
+    run), falls back to the values transcribed from docs/compliance_check.md's VIF
     section and labels the figure accordingly.
     """
     labels = ["utilization", "delay_residual", "loss_residual", "churn_score"]
@@ -548,7 +548,7 @@ def make_vif_figure(plt) -> None:
         provenance = "computed by hybrid_congestion_churn_matrix.py (n=%s)" % scoped_rows[0]["n"]
     else:
         values = [2.055, 2.293, 2.836, 1.020]
-        provenance = "transcribed from compliance_check.md (n=213) -- run hybrid_congestion_churn_matrix.py to recompute"
+        provenance = "transcribed from docs/compliance_check.md (n=213) -- run hybrid_congestion_churn_matrix.py to recompute"
 
     fig, ax = plt.subplots(figsize=(8, 4.4))
     colors = ["#2a78d6", "#2a78d6", "#e34948", "#1baf7a"]

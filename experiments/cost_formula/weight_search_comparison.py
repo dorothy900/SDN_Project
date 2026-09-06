@@ -21,7 +21,7 @@ from typing import Callable, Dict, List, Sequence, Tuple
 import numpy as np
 from scipy.optimize import direct as scipy_direct
 
-from experiments.sensitivity_analysis import (
+from experiments.cost_formula.sensitivity_analysis import (
     COST_PATH_A,
     COST_PATH_A_UNIQUE_EDGES,
     COST_PATH_B,
@@ -30,7 +30,7 @@ from experiments.sensitivity_analysis import (
     COST_PATH_C_EDGES,
     COST_SHARED_EDGE,
 )
-from experiments.simulation_common import build_network_state, link_id
+from experiments.common.simulation_common import build_network_state, link_id
 from src.monitor.models import LinkStatistics
 from src.routing.graph_builder import GraphBuilder
 

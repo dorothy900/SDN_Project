@@ -43,8 +43,8 @@ from typing import Dict, List, Optional, Sequence
 
 from experiments.scenarios.congestion import CongestionScenario
 from experiments.scenarios.failure_recovery import FailureRecoveryScenario
-from experiments.simulation_common import make_drivers
-from experiments.traffic_generator import TrafficGenerator
+from experiments.common.simulation_common import make_drivers
+from experiments.common.traffic_generator import TrafficGenerator
 from experiments.cost_formula.weight_search_comparison import PARAM_ORDER
 
 import experiments.scenarios.congestion as _congestion_module

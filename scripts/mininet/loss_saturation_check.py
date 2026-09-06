@@ -52,7 +52,7 @@ from topology import GeantTopology
 from src.monitor.delay_prober import parse_ping_avg_rtt_ms, estimate_one_way_link_delay_ms
 from src.monitor.statistics_collector import StatisticsCollector
 from src.monitor.qdisc_stats import QdiscLossTracker
-from experiments.independence_stats import distance_correlation, permutation_test, spearman_rho
+from experiments.common.independence_stats import distance_correlation, permutation_test, spearman_rho
 
 OF_VERSION = "OpenFlow13"
 HOST_LINK_DELAY_MS = 1.0

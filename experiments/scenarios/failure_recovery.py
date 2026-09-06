@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-from experiments.simulation_common import (
+from experiments.common.simulation_common import (
     PRIMARY_PAIR,
     SAMPLE_INTERVAL_S,
     build_network_state,
@@ -25,7 +25,7 @@ from experiments.simulation_common import (
     make_drivers,
     set_link_condition,
 )
-from experiments.traffic_generator import FlowDefinition
+from experiments.common.traffic_generator import FlowDefinition
 
 FAILURE_SAMPLE = 4
 RESTORE_SAMPLE = 8

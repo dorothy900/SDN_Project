@@ -98,7 +98,7 @@ def test_aggregate_repeated_runs_mean_and_ci95():
     # t_critical(df=1) for a 95% two-tailed interval is 12.706, not the normal
     # approximation's 1.96 -- see MetricsCalculator._T_CRITICAL_95 (fixed
     # 2026-08-24: the previous fixed-1.96 formula understated every small-n
-    # CI in this project by up to ~2.2x; see compliance_check.md/this
+    # CI in this project by up to ~2.2x; see docs/compliance_check.md/this
     # session's scenario design audit, finding F2).
     assert row["avg_delay_ms_ci95"] == 12.706
     # A metric with zero spread across repeats has a zero-width interval.

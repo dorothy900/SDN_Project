@@ -33,8 +33,8 @@ from src.decision.decision_engine import DecisionEngine
 from src.monitor.models import LinkStatistics
 
 from experiments.scenarios.failure_recovery_generalization import labeled_pairs_23
-from experiments.simulation_common import SAMPLE_INTERVAL_S, build_network_state, link_id
-from experiments.traffic_generator import FlowDefinition
+from experiments.common.simulation_common import SAMPLE_INTERVAL_S, build_network_state, link_id
+from experiments.common.traffic_generator import FlowDefinition
 
 UTILIZATION_TRACE = [0.68, 0.71, 0.75, 0.79, 0.83, 0.88, 0.92, 0.96, 0.97, 0.98, 0.35, 0.35, 0.35, 0.35]
 PERSISTENCE_REQUIRED_SAMPLES = 3

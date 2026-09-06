@@ -50,7 +50,7 @@ from src.monitor.statistics_collector import StatisticsCollector
 from src.monitor.qdisc_stats import QdiscLossTracker
 from src.monitor.network_state import NetworkState
 from src.monitor.models import LinkStatistics
-from experiments.independence_stats import distance_correlation, permutation_test, spearman_rho
+from experiments.common.independence_stats import distance_correlation, permutation_test, spearman_rho
 
 OF_VERSION = "OpenFlow13"
 HOST_LINK_DELAY_MS = 1.0

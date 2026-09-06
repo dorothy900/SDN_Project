@@ -33,7 +33,7 @@ from src.routing.flow_installer import FlowInstaller
 from src.routing.graph_builder import GraphBuilder
 from src.routing.static_shortest_path import StaticShortestPath
 
-from experiments.sndlib_demand import FALLBACK_HIGH, FALLBACK_LOW, resolve_edge_demand_baseline, resolve_edge_diversity_baseline
+from experiments.common.sndlib_demand import FALLBACK_HIGH, FALLBACK_LOW, resolve_edge_demand_baseline, resolve_edge_diversity_baseline
 
 SAMPLE_INTERVAL_S = 2.0  # matches config/topology.yaml monitoring.interval_seconds
 LINK_CAPACITY_MBPS = 100.0  # flat fallback, used only when there's nothing real to

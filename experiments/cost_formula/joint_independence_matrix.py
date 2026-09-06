@@ -35,8 +35,8 @@ import random
 from pathlib import Path
 from typing import Dict, List
 
-from experiments.independence_stats import permutation_test, spearman_rho, variance_inflation_factors
-from experiments.simulation_common import (
+from experiments.common.independence_stats import permutation_test, spearman_rho, variance_inflation_factors
+from experiments.common.simulation_common import (
     SAMPLE_INTERVAL_S,
     build_network_state,
     link_id,

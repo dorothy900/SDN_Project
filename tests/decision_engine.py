@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from experiments.simulation_common import PRIMARY_PAIR, build_network_state, link_id, set_link_condition
+from experiments.common.simulation_common import PRIMARY_PAIR, build_network_state, link_id, set_link_condition
 from src.decision.decision_engine import DecisionEngine
 from src.decision.threshold_detector import ThresholdViolation
 from src.routing.graph_builder import GraphBuilder
