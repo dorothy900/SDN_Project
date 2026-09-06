@@ -268,6 +268,28 @@ def test_recovery_switchback_blocked_by_gate_keeps_its_watch_then_fires_on_relea
     assert (src, dst) not in engine.recovery_links
 
 
+def test_recovery_switchback_restores_a_tied_canonical_path(tmp_path, monkeypatch):
+    """When the forced detour ends up exactly tied with the original path
+    (common with neither congested), the recovery switch-back still returns to
+    the canonical path instead of sticking on the detour forever -- but a
+    genuinely worse original is still refused."""
+    engine, state, src, dst, original_path, detour = _make_engine(tmp_path)
+    link = link_id(original_path[0], original_path[1])
+    window = engine.recovery_manager.recovery_window_seconds
+
+    tie = {"old_cost": 1.0, "new_cost": 1.0, "absolute_improvement": 0.0,
+           "relative_improvement": 0.0, "accepted": False}
+    monkeypatch.setattr(engine.path_cost, "compare_paths", lambda *a, **k: dict(tie))
+    engine.begin_recovery_watch(src, dst, link, original_path=original_path, now=0.0)
+    fired = engine.evaluate_recovery_switchback(src, dst, detour, now=window + 1)
+    assert fired is not None and fired["new_path"] == original_path
+
+    worse = {**tie, "new_cost": 1.5, "absolute_improvement": -0.5, "relative_improvement": -0.5}
+    monkeypatch.setattr(engine.path_cost, "compare_paths", lambda *a, **k: dict(worse))
+    engine.begin_recovery_watch(src, dst, link, original_path=original_path, now=1000.0)
+    assert engine.evaluate_recovery_switchback(src, dst, detour, now=1000.0 + window + 1) is None
+
+
 def test_recovery_switchback_watch_drops_past_the_absolute_bound(tmp_path):
     """A link still gated long past RESILIENCE_BLOCKED_SWITCHBACK_MAX_SECONDS
     stops holding the watch open -- the safety valve against a permanent leak."""

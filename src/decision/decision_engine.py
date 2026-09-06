@@ -451,7 +451,7 @@ class DecisionEngine:
 
         # If the original path still crosses a link the resilience gate has
         # latched, the switch-back is correctly refused for now -- but the
-        # watch is kept (up to RESILIENCE_BLOCKED_SWITCHBACK_MAX_WINDOWS) so a
+        # watch is kept (up to RESILIENCE_BLOCKED_SWITCHBACK_MAX_SECONDS) so a
         # later step retries once the gate releases, rather than consuming the
         # watch here and stranding the flow on the detour permanently.
         gb = self.path_cost.graph_builder
@@ -482,6 +482,7 @@ class DecisionEngine:
             emergency=True,
             now=now,
             offered_load_mbps=offered_load_mbps,
+            restore_canonical=True,
         )
 
     def _churn_adaptive_min_improvement(self, affected_links: List[str], now: Optional[float] = None) -> Tuple[float, float]:
@@ -524,8 +525,18 @@ class DecisionEngine:
         emergency: bool,
         now: Optional[float] = None,
         offered_load_mbps: Optional[float] = None,
+        restore_canonical: bool = False,
     ) -> Optional[dict]:
-        """Shared cost-check, logging, and installation logic for any reroute."""
+        """Shared cost-check, logging, and installation logic for any reroute.
+
+        restore_canonical marks a switch-back to a path the flow was
+        *deliberately forced off* (recovery-window switch-back): the target
+        was the intended optimum and the current path is an imposed detour,
+        so it is accepted as long as the target is no worse than the detour,
+        not only when it is strictly better. Without this a detour that ends
+        up exactly tied with the original (common when neither is congested)
+        would strand the flow on the detour permanently.
+        """
         min_abs, min_rel = (0.0, 0.0) if emergency else self._churn_adaptive_min_improvement(affected_links, now=now)
         # No separate threshold offset for the offered-load correction here:
         # PathCost.calculate_path_cost already prices it correctly per-edge
@@ -540,7 +551,10 @@ class DecisionEngine:
             now=now,
             offered_load_mbps=offered_load_mbps,
         )
-        if not comparison["accepted"]:
+        accepted = comparison["accepted"] or (
+            restore_canonical and comparison["new_cost"] <= comparison["old_cost"]
+        )
+        if not accepted:
             self.logger.log_no_improvement(
                 current_path,
                 candidate_path,
