@@ -29,7 +29,6 @@ def test_stability_integration() -> None:
         output_dir / "priority_policy_test.csv",
         output_dir / "stability_integration_trace.csv",
         output_dir / "stability_integration_report.md",
-        output_dir / "week5_wrapup_notes.md",
     ]
     for path in expected_files:
         assert path.exists(), "Missing expected Stage 5 output: %s" % path

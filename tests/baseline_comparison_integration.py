@@ -28,7 +28,6 @@ def test_baseline_comparison_integration() -> None:
     dynamic_file = output_dir / "dynamic_baseline_events.csv"
     summary_file = output_dir / "baseline_summary.csv"
     repeated_file = output_dir / "baseline_summary_repeated.csv"
-    wrapup_file = output_dir / "week3_wrapup_notes.md"
 
     for path in [
         candidate_path_file,
@@ -37,7 +36,6 @@ def test_baseline_comparison_integration() -> None:
         dynamic_file,
         summary_file,
         repeated_file,
-        wrapup_file,
     ]:
         assert path.exists(), f"Missing expected Stage 3 output: {path}"
 

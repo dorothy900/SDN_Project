@@ -67,7 +67,6 @@ class BaselineComparison:
         dynamic_rows = self._run_dynamic_baseline(state, candidate_data)
         summary_rows = self._run_baseline_summary(state, candidate_data, dynamic_rows)
         repeated_rows = self._run_repeated_trials(repeat=repeat, pairs=test_pairs)
-        self._write_wrapup_notes()
 
         return {
             "candidate_paths": candidate_data,
@@ -186,8 +185,7 @@ class BaselineComparison:
         candidate_data: Dict[str, Dict[str, object]],
         dynamic_rows: Sequence[Dict[str, object]],
     ) -> List[Dict[str, object]]:
-        """Day 5: compare static and dynamic baselines with consistent formatting."""
-        builder = GraphBuilder(state)
+        """Compare static and dynamic baselines with consistent formatting."""
         static_records: List[Tuple[List[str], int]] = []
         dynamic_records: List[Tuple[List[str], int]] = []
 
@@ -258,20 +256,6 @@ class BaselineComparison:
             writer.writerows(rows)
 
         return rows
-
-    def _write_wrapup_notes(self) -> None:
-        """Day 7: record the Stage 3 wrap-up outcome."""
-        notes_path = self.output_dir / "week3_wrapup_notes.md"
-        notes_path.write_text(
-            "# Week 3 Wrap-up Notes\n\n"
-            "- Graph builder candidate path enumeration completed.\n"
-            "- Static baseline remains deterministic across repeated selections.\n"
-            "- Flow installer generates bidirectional rules and safe replacements.\n"
-            "- Dynamic baseline reroutes immediately once path utilization crosses the threshold.\n"
-            "- Baseline summaries and repeated-trial aggregates were produced successfully.\n"
-            "- No blocking Stage 3 issues carry into Week 4.\n",
-            encoding="utf-8",
-        )
 
     def _metric_row(
         self,

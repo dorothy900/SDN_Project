@@ -12,7 +12,7 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from src.monitor.link_mapper import LinkMapper
 from src.monitor.models import LinkStatistics, PortStatistics
@@ -186,18 +186,6 @@ class NetworkStateValidation:
                 interface_result["has_required_keys"], interface_result["node_count"], interface_result["link_count"],
                 ", ".join(present),
             ),
-            encoding="utf-8",
-        )
-
-        wrapup_path = self.output_dir / "week2_wrapup_notes.md"
-        wrapup_path.write_text(
-            "# Week 2 Wrap-up Notes\n\n"
-            "- Day 1: rate calculation verified against known byte-counter deltas.\n"
-            "- Day 2: link utilization verified against a known capacity.\n"
-            "- Day 3: rolling history window verified over a step-load trace.\n"
-            "- Day 4: link down/up detection verified via get_network_state().\n"
-            "- Day 5: network state interface structure verified.\n"
-            "- Day 6: integration report generated from the results above.\n",
             encoding="utf-8",
         )
 

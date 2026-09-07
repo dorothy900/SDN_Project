@@ -66,7 +66,6 @@ class StabilityValidation:
         recovery_rows = self._run_recovery_window()
         policy_rows = self._run_priority_policy()
         integration_summary = self._run_stability_integration()
-        self._write_wrapup_notes(integration_summary)
 
         return {
             "pair": pair,
@@ -334,21 +333,6 @@ class StabilityValidation:
             encoding="utf-8",
         )
         return summary
-
-    def _write_wrapup_notes(self, summary: Dict[str, object]) -> None:
-        """Day 7: record the Stage 5 wrap-up outcome."""
-        notes_path = self.output_dir / "week5_wrapup_notes.md"
-        notes_path.write_text(
-            "# Week 5 Wrap-up Notes\n\n"
-            "- Hysteresis avoided repeated state flips near the utilization threshold.\n"
-            "- Hold-down blocked repeated ordinary reroutes within the protected window.\n"
-            "- Emergency reroute bypassed ordinary protections when a current-path link failed.\n"
-            "- Recovery protection ignored unstable restoration and only allowed stable switch-back after the recovery window.\n"
-            "- Priority-aware policy made high-priority traffic react earlier than low-priority traffic.\n"
-            "- Integrated stability control reduced oscillation from %d naive reroutes to %d controlled reroute(s).\n"
-            % (summary["naive_reroutes"], summary["stable_reroutes"]),
-            encoding="utf-8",
-        )
 
     @staticmethod
     def _write_csv(output_path: Path, rows: Sequence[Dict[str, object]]) -> None:
