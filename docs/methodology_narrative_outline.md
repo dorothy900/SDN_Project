@@ -233,10 +233,12 @@ explanation for the result* — independent of Part 4's problems with the
    repeatedly hidden assumptions throughout this whole session — a Pareto
    framing fits the "stability-aware" narrative better by reporting
    trade-off *regimes* instead of forcing one answer). Built
-   `experiments/pareto_weight_analysis.py`: Pareto-dominance checks (none
-   of 8 churn/jitter-vs-congestion trade-off scenarios tested turned out
-   to be trivially dominated — all are genuine trade-offs) plus a
-   weight-simplex sweep locating the **critical ratio** separating which
+   `experiments/cost_formula/pareto_weight_analysis.py`: Pareto-dominance
+   checks over trade-off scenarios covering each searched secondary weight
+   against alpha (churn, delay-jitter, loss-residual, loss-jitter) plus a
+   3-way multi-factor trial — none trivially dominated, all genuine
+   trade-offs — plus a weight-simplex sweep locating the **critical ratio**
+   separating which
    weight regime prefers which candidate (verified exactly against
    closed-form algebra for these two-term-conflict scenarios).
 

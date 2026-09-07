@@ -1,5 +1,11 @@
 # Dissertation Requirements Compliance Check
 
+> This is a **chronological development log**. Dated entries describe the state
+> at the time they were written — file and module paths in older entries reflect
+> the repository layout of that date, not the final one (current layout: `README.md`).
+> For the current position, read the three dated updates in the "Final Verdict"
+> section at the end.
+
 ## Summary
 
 **Overall Status: ✅ Weeks 1–6 implemented and passing (178 tests as of 2026-09-06; 48/48 when
