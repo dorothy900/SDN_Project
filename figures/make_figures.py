@@ -533,22 +533,20 @@ def make_vif_figure(plt) -> None:
     delay_ms / loss -- those are collinear with utilisation by construction,
     VIF > 200, see results/joint_independence_matrix/joint_report.md).
 
-    Reads results/hybrid_congestion_churn_matrix/scoped_vif.csv, written by
-    experiments/cost_formula/hybrid_congestion_churn_matrix.py. If that file
-    is missing (the experiment needs the real independence-check datasets to
-    run), falls back to the values transcribed from docs/compliance_check.md's VIF
-    section and labels the figure accordingly.
+    Sourced entirely from results/hybrid_congestion_churn_matrix/scoped_vif.csv,
+    written by experiments/cost_formula/hybrid_congestion_churn_matrix.py. If
+    that file is missing the figure is skipped (no transcribed / hand-entered
+    numbers are ever drawn) -- run that experiment first.
     """
     labels = ["utilization", "delay_residual", "loss_residual", "churn_score"]
     scoped = Path("results/hybrid_congestion_churn_matrix/scoped_vif.csv")
-    if scoped.exists():
-        scoped_rows = _load_csv(scoped)
-        by_var = {r["variable"]: float(r["vif"]) for r in scoped_rows}
-        values = [by_var[v] for v in labels]
-        provenance = "computed by hybrid_congestion_churn_matrix.py (n=%s)" % scoped_rows[0]["n"]
-    else:
-        values = [2.055, 2.293, 2.836, 1.020]
-        provenance = "transcribed from docs/compliance_check.md (n=213) -- run hybrid_congestion_churn_matrix.py to recompute"
+    if not scoped.exists():
+        print("Skipping vif.png -- run experiments/cost_formula/hybrid_congestion_churn_matrix.py first")
+        return
+    scoped_rows = _load_csv(scoped)
+    by_var = {r["variable"]: float(r["vif"]) for r in scoped_rows}
+    values = [by_var[v] for v in labels]
+    provenance = "computed by hybrid_congestion_churn_matrix.py (n=%s)" % scoped_rows[0]["n"]
 
     fig, ax = plt.subplots(figsize=(8, 4.4))
     colors = ["#2a78d6", "#2a78d6", "#e34948", "#1baf7a"]
