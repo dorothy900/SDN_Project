@@ -12,10 +12,17 @@ Each edge weight is the 7-term path-cost formula (_calculate_edge_cost):
 (residuals are measured-minus-model, so congestion is not double-counted;
 jitter terms price heteroscedasticity; churn prices link-level instability).
 Weights live in config/decision.yaml and are justified in
-experiments/cost_formula/. epsilon's term is effectively inert: a failed
-link is removed from the graph before costing, so reliability acts as a
-hard constraint rather than a soft cost, and the weight search / Pareto
-analysis are 6-dimensional (epsilon fixed) for that reason.
+experiments/cost_formula/.
+
+epsilon prices reliability (link status) as a soft cost, but failure is
+*also* handled as a hard constraint -- a down link is removed from
+active_graph before costing (TopologyState.mark_link_failed) -- and the
+hard constraint dominates: in normal operation _calculate_edge_cost only
+ever sees "up" links, so the epsilon term is a defensive fallback rather
+than the primary failure-avoidance mechanism. The weight search / Pareto
+analysis fix epsilon and search the other 6 for that reason;
+experiments/cost_formula/ separately confirms reliability_down is
+statistically independent of the other cost variables.
 
 On top of that, the optional resilience layer: build_weighted_graph() adds
 a finite RESILIENCE_AVOID_PENALTY to links the ResilienceGate has latched
