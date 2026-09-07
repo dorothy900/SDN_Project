@@ -324,7 +324,7 @@ contents, pulled out of the four parts above:
 
 ---
 
-*Source material: `compliance_check.md` (full technical log, chronological)
-and `/home/vboxuser/.claude/projects/-home-vboxuser-sdn-project/memory/
-pending_tasks_2026_08_12.md` (items 1-18 cover this entire arc). This file
-is a re-sequencing for writing purposes, not a replacement for either.*
+*Source material: `docs/compliance_check.md` (full technical log,
+chronological) plus a separate working task list (items 1-18 cover this
+entire arc). This file is a re-sequencing for writing purposes, not a
+replacement for either.*

@@ -35,13 +35,10 @@ results/
 *.swp
 *.swo
 
-# IDE
+# IDE / editor / tooling caches
 .vscode/
 .idea/
-
-# Tooling / local state
 .pytest_cache/
-.claude/
 
 # Temporary
 /tmp/

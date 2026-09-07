@@ -1066,10 +1066,10 @@ structured decision path: rule out experiment-design artifacts first (time
 drift, link-switch cold start, sample-to-sample hysteresis/queue carryover);
 if those are clean, treat it as a genuine non-monotonic relationship and
 switch to a non-parametric residual extraction method instead of continuing
-to force the queueing-theory shape. Diagnostic figure (4 panels: residual by
-link, residual vs execution time colored by link, residual by link-switch
-status, local-median smoother showing the hump shape) published at
-https://claude.ai/code/artifact/3321f210-88e7-4c3f-b345-ae29664b65f4.
+to force the queueing-theory shape. A 4-panel diagnostic figure was drafted
+for this (residual by link, residual vs execution time coloured by link,
+residual by link-switch status, local-median smoother showing the hump
+shape).
 
 **All three artifact hypotheses ruled out, using the real execution-order
 log from the coverage-extension run (196 samples, reconstructed sample
