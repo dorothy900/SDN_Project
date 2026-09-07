@@ -426,6 +426,13 @@ def make_resilience_figure(plt) -> None:
                     positive = "sustained excess loss", negative = 50% honestly
                     priced / 50% one-or-two isolated bad polls, swept over
                     LOSS_LEVEL_CAP.
+
+    The class instances are synthetic ground truth (there is no labelled
+    real-traffic flap/loss dataset), but the *scored functions* are the real
+    production code, and the operating point this figure picks (avoid_threshold
+    = 0.57) was then confirmed to fire correctly on real OVS + iperf:
+    scripts/mininet/link_flap_check.py (4/4 PASS) and abnormal_loss_check.py
+    (10/10 PASS) -- annotated on panels (b) and (d).
     """
     roc_rows = _load_csv(Path("results/resilience_sensitivity/roc.csv"))
     loss_roc = _load_csv(Path("results/resilience_sensitivity/roc_loss.csv"))
@@ -434,11 +441,12 @@ def make_resilience_figure(plt) -> None:
     hl_colors = {5.0: "#94a3ab", 10.0: "#eda100", 20.0: "#2a78d6", 40.0: "#1baf7a", 60.0: "#8858c8"}
     CONFIG_CAP = 0.05
 
-    fig, axes = plt.subplots(2, 2, figsize=(13, 10))
+    fig, axes = plt.subplots(2, 2, figsize=(13, 10.4))
     fig.suptitle(
         "resilience_sensitivity: ROC / Youden's-J threshold search for both resilience signals\n"
-        "(300 randomized synthetic instances/class)",
-        fontsize=13,
+        "300 synthetic instances/class, scored by the real detector code; "
+        "the chosen operating point (0.57) is then confirmed on real OVS + iperf",
+        fontsize=12.5,
     )
 
     ax = axes[0][0]
@@ -469,6 +477,10 @@ def make_resilience_figure(plt) -> None:
                    label=f"J=1.0 plateau [{plateau[0]:.2f}, {plateau[-1]:.2f}]")
     ax.axvline(0.57, color="#e34948", linestyle="--", linewidth=1.4, label="config avoid_threshold = 0.57")
     ax.axvline(0.70, color="#94a3ab", linestyle=":", linewidth=1.2, label="previous hand-picked default = 0.70")
+    ax.annotate("0.57 confirmed on\nreal OVS + iperf\n(link_flap_check.py, 4/4)",
+                xy=(0.57, 0.55), xytext=(0.74, 0.42), fontsize=7, color="#1a8f5a",
+                ha="left", va="center",
+                arrowprops=dict(arrowstyle="->", color="#1a8f5a", lw=1.1))
     ax.set_xlabel("avoid_threshold")
     ax.set_ylabel("Youden's J = TPR - FPR")
     ax.set_title("(b) flap signal, half_life=20s: J vs threshold")
@@ -506,6 +518,10 @@ def make_resilience_figure(plt) -> None:
     ax.axvline(t[j_best], color="#1baf7a", linestyle=":", linewidth=1.3,
                label=f"Youden-optimal = {t[j_best]:.2f} (J={j[j_best]:.2f})")
     ax.axvline(0.57, color="#e34948", linestyle="--", linewidth=1.4, label="config avoid_threshold = 0.57")
+    ax.annotate("0.57 confirmed on\nreal OVS + iperf\n(abnormal_loss_check.py, 10/10)",
+                xy=(0.57, 0.55), xytext=(0.70, 0.40), fontsize=7, color="#1a8f5a",
+                ha="left", va="center",
+                arrowprops=dict(arrowstyle="->", color="#1a8f5a", lw=1.1))
     cfg_cap_row = next((r for r in loss_caps_csv if abs(float(r["loss_level_cap"]) - CONFIG_CAP) < 1e-9), None)
     if cfg_cap_row is not None:
         ax.set_title("(d) loss signal, LOSS_LEVEL_CAP=0.05: J vs threshold\n"
