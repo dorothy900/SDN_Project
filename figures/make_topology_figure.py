@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
 """
-Make Topology Figure - renders the real GEANT2012 topology (40 nodes, 61
-edges) this entire project runs on, geographically laid out from the
-GraphML's own real Latitude/Longitude per node (an Internet Topology Zoo
-export), edge width/color by the real published capacity tier
-(src/monitor/link_capacity.py's REAL_LINK_LABEL_TO_MBPS scale) rather than
-an arbitrary spring layout -- so the figure is the actual network, not a
-generic graph drawing.
+Renders the real GEANT2012 topology (40 nodes, 61 edges) this project runs
+on, geographically laid out from the GraphML's own Latitude/Longitude per
+node (an Internet Topology Zoo export), with edge width and colour set by
+the real published capacity tier rather than an arbitrary spring layout, so
+the figure is the actual network, not a generic graph drawing.
 
-Also marks two things this project's own experiments found on this real
-topology, not just decoration: the two structural-bridge edges (12-20,
-21-27) that have no genuine alternative route anywhere in the graph for
-their own endpoints (why the real-hardware congestion demo could not use
-either of them -- see scripts/ryu/ryu_real_congestion_probe.py's docstring),
-and the monitored pair (node 0 <-> node 12) together with the hotspot
-link (0-4) that demo actually used instead.
+Also marks two things this project's own experiments found on this
+topology, not decoration: the two structural-bridge edges (12-20, 21-27)
+that have no genuine alternative route anywhere in the graph for their own
+endpoints, and the monitored pair (node 0 and node 12) together with the
+hotspot link (0-4) the induced-congestion demo used instead.
 
 Run as: python3 -m figures.make_topology_figure
 Writes results/figures/topology.png and .pdf.
@@ -23,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.monitor.link_capacity import REAL_LINK_LABEL_TO_MBPS, _load_geant_graph
+from src.monitor.link_capacity import _load_geant_graph
 
 OUTPUT_DIR = Path("results/figures")
 
@@ -105,20 +101,15 @@ def make_topology_figure(plt) -> None:
         Line2D([0], [0], color=TIER_STYLE["155 Mbps"][1], linewidth=TIER_STYLE["155 Mbps"][0], label="155 Mbps (real label)"),
         Line2D([0], [0], color=TIER_STYLE[None][1], linewidth=TIER_STYLE[None][0], label="no published label (falls back to default)"),
         Line2D([0], [0], color="#e34948", linewidth=2.2, linestyle=(0, (4, 2)),
-               label="structural bridge (12-20, 21-27) -- no alternative\nroute exists anywhere in the graph for either endpoint"),
-        Line2D([0], [0], color="#1baf7a", linewidth=3.0, label="hotspot link (0-4) -- real induced-congestion demo"),
+               label="structural bridge (12–20, 21–27):  no alternative\nroute anywhere in the graph for either endpoint"),
+        Line2D([0], [0], color="#1baf7a", linewidth=3.0, label="hotspot link 0–4  (induced-congestion demo)"),
         Line2D([0], [0], marker="o", color="none", markerfacecolor="#1baf7a", markeredgecolor="#0d5c3b",
-               markersize=9, label="monitored pair (node 0 <-> node 12)"),
+               markersize=9, label="monitored pair (node 0 – node 12)"),
     ]
     ax.legend(handles=legend_elems, loc="lower left", fontsize=7.6, framealpha=0.92)
 
-    ax.set_title(
-        "Real GEANT2012 topology (40 nodes, 61 edges) -- geographic layout from the GraphML's\n"
-        "own Latitude/Longitude; edge capacity tiers as scaled by src/monitor/link_capacity.py",
-        fontsize=12,
-    )
-    ax.set_xlabel("Longitude")
-    ax.set_ylabel("Latitude")
+    ax.set_xlabel("longitude")
+    ax.set_ylabel("latitude")
     ax.set_aspect(1.55)  # crude equirectangular correction for this latitude band, not a true projection
     fig.tight_layout()
     for ext in ("png", "pdf"):
