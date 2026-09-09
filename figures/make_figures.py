@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-Make Figures - render publication-style, multi-panel matplotlib figures
-(box plots, delay-vs-load curves with error bands, violin plots, VIF and
-offered-load bar charts) for the generalized scenario results and the
-formula-validation statistics, straight from the CSVs already in results/.
+Make Figures - render the multi-panel result figures (box plots, delay-vs-load
+curves with error bands, ROC / Youden-J panels, VIF and offered-load bar
+charts) straight from the CSVs already in results/.
+
+The figures carry no overall title: in the write-up the descriptive title
+(setting, protocol, notation) belongs in the LaTeX \\caption, not baked into
+the image.  Panel labels "(a)" / "(b)" stay, since they are referenced from
+the caption.  Each figure is written as both .png (preview) and .pdf (vector,
+for \\includegraphics).
 
 Run as: python3 -m figures.make_figures
-Writes PNGs to results/figures/.
 """
 from __future__ import annotations
 
@@ -27,15 +31,19 @@ def _load_csv(path: Path) -> List[Dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def _save(fig, name: str) -> None:
+    """Write <name>.png and <name>.pdf into results/figures/."""
+    for ext in ("png", "pdf"):
+        out = OUTPUT_DIR / f"{name}.{ext}"
+        fig.savefig(out, dpi=200, bbox_inches="tight")
+        print("Wrote", out)
+    import matplotlib.pyplot as _plt
+    _plt.close(fig)
+
+
 def make_failure_recovery_figure(plt) -> None:
     rows = _load_csv(Path("results/failure_recovery_generalization/summary.csv"))
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.2))
-    fig.suptitle(
-        "failure_recovery: proposed vs dynamic vs static, 23 real node pairs x 5 seeds\n"
-        "stable + unstable (flap-then-settle) restoration, both cases",
-        fontsize=13,
-    )
-
     ax = axes[0]
     data, tick_labels, colors = [], [], []
     for case in ("stable", "unstable"):
@@ -74,11 +82,8 @@ def make_failure_recovery_figure(plt) -> None:
     ax.set_title("(b) Improvement vs hop count (stable case)")
     ax.legend(fontsize=9)
 
-    fig.tight_layout(rect=(0, 0, 1, 0.93))
-    out = OUTPUT_DIR / "failure_recovery.png"
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print("Wrote", out)
+    fig.tight_layout()
+    _save(fig, "failure_recovery")
 
 
 def make_failure_recovery_reroute_count_figure(plt) -> None:
@@ -90,12 +95,6 @@ def make_failure_recovery_reroute_count_figure(plt) -> None:
     """
     rows = _load_csv(Path("results/failure_recovery_generalization/summary.csv"))
     fig, ax = plt.subplots(figsize=(8, 5.2))
-    fig.suptitle(
-        "failure_recovery: reroute count, dynamic vs proposed, 23 real node pairs x 5 seeds\n"
-        "unstable = link flaps down/up again shortly after the first restoration",
-        fontsize=12,
-    )
-
     cases = ("stable", "unstable")
     algos = ("dynamic", "proposed")
     x = range(len(cases))
@@ -111,23 +110,14 @@ def make_failure_recovery_reroute_count_figure(plt) -> None:
     ax.set_ylabel("mean reroute count per run, n=23 pairs")
     ax.legend(fontsize=9)
 
-    fig.tight_layout(rect=(0, 0, 1, 0.88))
-    out = OUTPUT_DIR / "failure_recovery_reroute_count.png"
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print("Wrote", out)
+    fig.tight_layout()
+    _save(fig, "failure_recovery_reroute_count")
 
 
 def make_increasing_load_figure(plt) -> None:
     rows = _load_csv(Path("results/increasing_load_generalization/persample.csv"))
     summary_rows = _load_csv(Path("results/increasing_load_generalization/summary.csv"))
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.2))
-    fig.suptitle(
-        "increasing_load: monotonic ramp 0.10->0.90, 23 real node pairs x 5 seeds\n"
-        "the one scenario where dynamic beats proposed on raw delay",
-        fontsize=13,
-    )
-
     ax = axes[0]
     load = [float(r["load_factor"]) for r in rows]
     for algo in ("static", "dynamic", "proposed"):
@@ -156,23 +146,14 @@ def make_increasing_load_figure(plt) -> None:
     ax.set_ylabel("mean reroute count per run")
     ax.set_title("(b) Operational cost (reroute count), mean across 23 pairs")
 
-    fig.tight_layout(rect=(0, 0, 1, 0.93))
-    out = OUTPUT_DIR / "increasing_load.png"
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print("Wrote", out)
+    fig.tight_layout()
+    _save(fig, "increasing_load")
 
 
 def make_stale_stats_figure(plt) -> None:
     summary_rows = _load_csv(Path("results/stale_stats_generalization/summary.csv"))
     dd_rows = _load_csv(Path("results/stale_stats_generalization/persample_delayed_detection.csv"))
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.2))
-    fig.suptitle(
-        "stale_stats: a single observed-only glitch vs. a real sustained event with delayed polls\n"
-        "23 real node pairs x 5 seeds per phase",
-        fontsize=13,
-    )
-
     ax = axes[0]
     algos = ("static", "dynamic", "proposed")
     fp_rate = [st.mean([float(r[f"{a}_noise_false_reroutes"]) for r in summary_rows]) * 100 for a in algos]
@@ -205,45 +186,40 @@ def make_stale_stats_figure(plt) -> None:
     ax.set_title("(b) Delayed-detection phase: delay vs sample")
     ax.legend(fontsize=9)
 
-    fig.tight_layout(rect=(0, 0, 1, 0.93))
-    out = OUTPUT_DIR / "stale_stats.png"
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print("Wrote", out)
+    fig.tight_layout()
+    _save(fig, "stale_stats")
 
 
 def make_priority_policy_figure(plt) -> None:
     rows = _load_csv(Path("results/priority_policy_generalization/summary.csv"))
     fig, ax = plt.subplots(figsize=(9, 5.2))
-    fig.suptitle(
-        "priority_policy: first-reroute sample by traffic class, 23 real node pairs x 5 seeds\n"
-        "reroute_immediate ordering (VoIP/Video before Web/File Transfer) holds 23/23",
-        fontsize=12.5,
-    )
     classes = [
         ("voip_mean_sample", "VoIP", "#2a78d6"),
         ("video_mean_sample", "Video", "#2a78d6"),
         ("web_mean_sample", "Web", "#eda100"),
         ("file_transfer_mean_sample", "File\nTransfer", "#e34948"),
     ]
+    # Strip plot, not a violin: the per-pair values are means of small integers
+    # and heavily tied (File Transfer is a single value across all 23 pairs), so
+    # a KDE would invent a continuous spread that is not in the data.
     data = [[float(r[key]) for r in rows] for key, _, _ in classes]
-    parts = ax.violinplot(data, showmedians=True, widths=0.7)
-    for pc, (_, _, color) in zip(parts["bodies"], classes):
-        pc.set_facecolor(color)
-        pc.set_alpha(0.55)
     rng = random.Random(7)
-    for i, vals in enumerate(data, start=1):
-        xs = [i + rng.uniform(-0.06, 0.06) for _ in vals]
-        ax.scatter(xs, vals, color="#17181a", alpha=0.35, s=14, zorder=3)
+    for i, (vals, (_, _, color)) in enumerate(zip(data, classes), start=1):
+        xs = [i + rng.uniform(-0.11, 0.11) for _ in vals]
+        ax.scatter(xs, vals, color=color, alpha=0.55, s=26, zorder=3, edgecolors="none")
+        med = st.median(vals)
+        ax.plot([i - 0.24, i + 0.24], [med, med], color=color, lw=2.4, zorder=4)
+        ax.plot([i - 0.16, i + 0.16], [min(vals), min(vals)], color=color, lw=1.0, alpha=0.6)
+        ax.plot([i - 0.16, i + 0.16], [max(vals), max(vals)], color=color, lw=1.0, alpha=0.6)
     ax.set_xticks(range(1, len(classes) + 1))
     ax.set_xticklabels([label for _, label, _ in classes])
-    ax.set_ylabel("first-reroute sample")
+    ax.set_xlim(0.5, len(classes) + 0.5)
+    ax.set_ylabel("mean first-reroute sample  (per node pair, n = 23)")
+    ax.text(0.02, 0.97, "bar = median · whiskers = min / max", transform=ax.transAxes,
+            fontsize=8, va="top", color="#555")
 
-    fig.tight_layout(rect=(0, 0, 1, 0.90))
-    out = OUTPUT_DIR / "priority_policy.png"
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print("Wrote", out)
+    fig.tight_layout()
+    _save(fig, "priority_policy")
 
 
 def make_congestion_figure(plt) -> None:
@@ -256,12 +232,6 @@ def make_congestion_figure(plt) -> None:
     rows = _load_csv(Path("results/congestion_generalization/summary.csv"))
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.2))
-    fig.suptitle(
-        "congestion: transient spike vs sustained overload, 23 real node pairs x 5 seeds\n"
-        "monitored flow is a reroute_immediate priority class -- see panel (b)",
-        fontsize=13,
-    )
-
     algos = ("static", "dynamic", "proposed")
     phases = ("temporary", "sustained")
     phase_labels = {"temporary": "transient\n(8 samples,\n2 violating)", "sustained": "sustained\n(12 samples,\n6 violating)"}
@@ -296,14 +266,11 @@ def make_congestion_figure(plt) -> None:
     ax.set_xticklabels([phase_labels[p].replace("\n", " ") for p in phases], fontsize=8.5)
     ax.set_ylabel("mean reroute count, n=23 pairs")
     ax.set_ylim(0, 1.3)
-    ax.set_title("(b) Reroute rate: dynamic == proposed here (reroute_immediate)")
+    ax.set_title("(b) Reroute count — identical for dynamic and proposed here")
     ax.legend(fontsize=9)
 
-    fig.tight_layout(rect=(0, 0, 1, 0.88))
-    out = OUTPUT_DIR / "congestion.png"
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print("Wrote", out)
+    fig.tight_layout()
+    _save(fig, "congestion")
 
 
 def make_weight_search_figure(plt) -> None:
@@ -316,12 +283,6 @@ def make_weight_search_figure(plt) -> None:
     rows = _load_csv(Path("results/pilot/sensitivity/weight_search_multi_instance_comparison.csv"))
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.2))
-    fig.suptitle(
-        "weight_search: DIRECT vs Bayesian optimization vs simulated annealing vs random search\n"
-        "vs DIRECT-then-SA hybrid -- 50 independent instances/method, matched 30-evaluation budget",
-        fontsize=13,
-    )
-
     ax = axes[0]
     methods = ["direct", "direct_then_sa_hybrid", "bayesian_optimization", "simulated_annealing", "random_search"]
     method_labels = ["DIRECT", "DIRECT\n+SA hybrid", "Bayesian\nOpt.", "Simulated\nAnnealing", "Random\nSearch"]
@@ -344,11 +305,8 @@ def make_weight_search_figure(plt) -> None:
     ax.set_xlabel("regret range across weight's full [0,1] sweep (OAT)")
     ax.set_title("(b) One-at-a-time sensitivity, ranked by impact")
 
-    fig.tight_layout(rect=(0, 0, 1, 0.90))
-    out = OUTPUT_DIR / "weight_search.png"
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print("Wrote", out)
+    fig.tight_layout()
+    _save(fig, "weight_search")
 
 
 def make_resilience_avoidance_figure(plt) -> None:
@@ -372,13 +330,10 @@ def make_resilience_avoidance_figure(plt) -> None:
     colors = {"proposed_noresil": "#c98a2b", "proposed": COLOR["proposed"]}
     algos = ("proposed_noresil", "proposed")
 
+    scen_label = {"abnormal_loss": "Abnormal loss (sudden shift)",
+                  "chronic_loss": "Chronic loss (bad from the start)"}
+    panel = iter("abcd")
     fig, axes = plt.subplots(2, 2, figsize=(11, 9))
-    fig.suptitle(
-        "resilience_avoidance: a lossy-but-uncongested link on the flow's path,\n"
-        "23/23 real GEANT pairs x 5 seeds -- proposed (resilience ON) vs the same stack OFF",
-        fontsize=12,
-    )
-
     for row, scenario in enumerate(("abnormal_loss", "chronic_loss")):
         rows = [r for r in all_rows if r["scenario"] == scenario]
         _mean = lambda col: st.mean([float(r[col]) for r in rows])
@@ -393,7 +348,7 @@ def make_resilience_avoidance_figure(plt) -> None:
         ax.set_xticks(range(len(algos)))
         ax.set_xticklabels([labels[a] for a in algos], fontsize=9)
         ax.set_ylabel("mean flow packet loss\nover the episode (%)")
-        ax.set_title("%s -- loss the flow eats" % scenario)
+        ax.set_title("(%s) %s — flow packet loss" % (next(panel), scen_label[scenario]))
 
         ax = axes[row][1]
         means = [_mean(f"{a}_delay_ms") for a in algos]
@@ -405,14 +360,11 @@ def make_resilience_avoidance_figure(plt) -> None:
         ax.set_xticklabels([labels[a] for a in algos], fontsize=9)
         ax.set_ylabel("mean flow delay\nover the episode (ms)")
         exposure = _mean("proposed_on_anomaly_link_samples")
-        ax.set_title("%s -- delay\n(proposed on the bad link only %.0f of 21 samples)"
-                     % (scenario, exposure))
+        ax.set_title("(%s) %s — flow delay\n(proposed rides the bad link only %.0f of 21 samples)"
+                     % (next(panel), scen_label[scenario], exposure))
 
-    fig.tight_layout(rect=(0, 0, 1, 0.9))
-    out = OUTPUT_DIR / "resilience_avoidance.png"
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print("Wrote", out)
+    fig.tight_layout()
+    _save(fig, "resilience_avoidance")
 
 
 def make_resilience_figure(plt) -> None:
@@ -442,13 +394,6 @@ def make_resilience_figure(plt) -> None:
     CONFIG_CAP = 0.05
 
     fig, axes = plt.subplots(2, 2, figsize=(13, 10.4))
-    fig.suptitle(
-        "resilience_sensitivity: ROC / Youden's-J threshold search for both resilience signals\n"
-        "300 synthetic instances/class, scored by the real detector code; "
-        "the chosen operating point (0.57) is then confirmed on real OVS + iperf",
-        fontsize=12.5,
-    )
-
     ax = axes[0][0]
     ax.plot([0, 1], [0, 1], linestyle="--", color="#b0b6bf", linewidth=1, label="chance")
     for hl in half_lives:
@@ -456,11 +401,11 @@ def make_resilience_figure(plt) -> None:
                           key=lambda r: float(r["threshold"]))
         fpr = [float(r["fpr"]) for r in hl_rows]
         tpr = [float(r["tpr"]) for r in hl_rows]
-        label = f"half_life={hl:.0f}s" + ("  (config default)" if hl == 20.0 else "")
+        label = f"half-life = {hl:.0f} s" + ("  (operating point)" if hl == 20.0 else "")
         ax.plot(fpr, tpr, color=hl_colors.get(hl, "#333333"), linewidth=1.8, label=label)
     ax.set_xlabel("FPR  (false positives on 'one legitimate transition')")
     ax.set_ylabel("TPR  (true positives on 'genuinely flapping')")
-    ax.set_title("(a) flap signal: ROC per half_life")
+    ax.set_title("(a) Flap signal — ROC by half-life")
     ax.legend(fontsize=8, loc="lower right")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.02, 1.02)
@@ -475,15 +420,15 @@ def make_resilience_figure(plt) -> None:
     if plateau:
         ax.axvspan(plateau[0], plateau[-1], color="#2a78d6", alpha=0.12,
                    label=f"J=1.0 plateau [{plateau[0]:.2f}, {plateau[-1]:.2f}]")
-    ax.axvline(0.57, color="#e34948", linestyle="--", linewidth=1.4, label="config avoid_threshold = 0.57")
-    ax.axvline(0.70, color="#94a3ab", linestyle=":", linewidth=1.2, label="previous hand-picked default = 0.70")
-    ax.annotate("0.57 confirmed on\nreal OVS + iperf\n(link_flap_check.py, 4/4)",
+    ax.axvline(0.57, color="#e34948", linestyle="--", linewidth=1.4, label="operating point = 0.57")
+    ax.axvline(0.70, color="#94a3ab", linestyle=":", linewidth=1.2, label="earlier hand-picked value = 0.70")
+    ax.annotate("0.57 confirmed on real\nOVS + iperf  (4/4 PASS)",
                 xy=(0.57, 0.55), xytext=(0.74, 0.42), fontsize=7, color="#1a8f5a",
                 ha="left", va="center",
                 arrowprops=dict(arrowstyle="->", color="#1a8f5a", lw=1.1))
-    ax.set_xlabel("avoid_threshold")
-    ax.set_ylabel("Youden's J = TPR - FPR")
-    ax.set_title("(b) flap signal, half_life=20s: J vs threshold")
+    ax.set_xlabel("avoidance threshold")
+    ax.set_ylabel("Youden's J  =  TPR − FPR")
+    ax.set_title("(b) Flap signal (half-life 20 s) — Youden's J vs threshold")
     ax.legend(fontsize=8, loc="lower left")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.05, 1.08)
@@ -498,12 +443,12 @@ def make_resilience_figure(plt) -> None:
                           key=lambda r: float(r["threshold"]))
         fpr = [float(r["fpr"]) for r in cap_rows]
         tpr = [float(r["tpr"]) for r in cap_rows]
-        label = f"LOSS_LEVEL_CAP={cap:.2f}" + ("  (config)" if abs(cap - CONFIG_CAP) < 1e-9 else "")
+        label = f"loss-level cap = {cap:.2f}" + ("  (operating point)" if abs(cap - CONFIG_CAP) < 1e-9 else "")
         lw = 2.4 if abs(cap - CONFIG_CAP) < 1e-9 else 1.5
         ax.plot(fpr, tpr, color=cap_colors.get(cap, "#333333"), linewidth=lw, label=label)
     ax.set_xlabel("FPR  (honest pricing / isolated bad polls)")
     ax.set_ylabel("TPR  (sustained excess loss)")
-    ax.set_title("(c) loss signal: ROC per LOSS_LEVEL_CAP")
+    ax.set_title("(c) Loss signal — ROC by loss-level cap")
     ax.legend(fontsize=8, loc="lower right")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.02, 1.02)
@@ -517,29 +462,26 @@ def make_resilience_figure(plt) -> None:
     j_best = max(range(len(j)), key=lambda i: j[i])
     ax.axvline(t[j_best], color="#1baf7a", linestyle=":", linewidth=1.3,
                label=f"Youden-optimal = {t[j_best]:.2f} (J={j[j_best]:.2f})")
-    ax.axvline(0.57, color="#e34948", linestyle="--", linewidth=1.4, label="config avoid_threshold = 0.57")
-    ax.annotate("0.57 confirmed on\nreal OVS + iperf\n(abnormal_loss_check.py, 10/10)",
+    ax.axvline(0.57, color="#e34948", linestyle="--", linewidth=1.4, label="operating point = 0.57")
+    ax.annotate("0.57 confirmed on real\nOVS + iperf  (10/10 PASS)",
                 xy=(0.57, 0.55), xytext=(0.70, 0.40), fontsize=7, color="#1a8f5a",
                 ha="left", va="center",
                 arrowprops=dict(arrowstyle="->", color="#1a8f5a", lw=1.1))
     cfg_cap_row = next((r for r in loss_caps_csv if abs(float(r["loss_level_cap"]) - CONFIG_CAP) < 1e-9), None)
     if cfg_cap_row is not None:
-        ax.set_title("(d) loss signal, LOSS_LEVEL_CAP=0.05: J vs threshold\n"
-                     "at 0.57: TPR=%.2f, FPR=%.2f"
+        ax.set_title("(d) Loss signal (loss-level cap 0.05) — Youden's J vs threshold\n"
+                     "at 0.57:  TPR = %.2f,  FPR = %.2f"
                      % (float(cfg_cap_row["tpr_at_config_0.57"]), float(cfg_cap_row["fpr_at_config_0.57"])))
     else:
-        ax.set_title("(d) loss signal, LOSS_LEVEL_CAP=0.05: J vs threshold")
-    ax.set_xlabel("avoid_threshold")
-    ax.set_ylabel("Youden's J = TPR - FPR")
+        ax.set_title("(d) Loss signal (loss-level cap 0.05) — Youden's J vs threshold")
+    ax.set_xlabel("avoidance threshold")
+    ax.set_ylabel("Youden's J  =  TPR − FPR")
     ax.legend(fontsize=8, loc="lower left")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.05, 1.08)
 
-    fig.tight_layout(rect=(0, 0, 1, 0.92))
-    out = OUTPUT_DIR / "resilience_sensitivity.png"
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print("Wrote", out)
+    fig.tight_layout()
+    _save(fig, "resilience_sensitivity")
 
 
 def make_vif_figure(plt) -> None:
@@ -554,15 +496,16 @@ def make_vif_figure(plt) -> None:
     that file is missing the figure is skipped (no transcribed / hand-entered
     numbers are ever drawn) -- run that experiment first.
     """
-    labels = ["utilization", "delay_residual", "loss_residual", "churn_score"]
+    keys = ["utilization", "delay_residual", "loss_residual", "churn_score"]
+    labels = ["utilisation", "delay residual", "loss residual", "churn score"]
     scoped = Path("results/hybrid_congestion_churn_matrix/scoped_vif.csv")
     if not scoped.exists():
-        print("Skipping vif.png -- run experiments/cost_formula/hybrid_congestion_churn_matrix.py first")
+        print("Skipping vif -- run experiments/cost_formula/hybrid_congestion_churn_matrix.py first")
         return
     scoped_rows = _load_csv(scoped)
     by_var = {r["variable"]: float(r["vif"]) for r in scoped_rows}
-    values = [by_var[v] for v in labels]
-    provenance = "computed by hybrid_congestion_churn_matrix.py (n=%s)" % scoped_rows[0]["n"]
+    values = [by_var[k] for k in keys]
+    n = scoped_rows[0]["n"]
 
     fig, ax = plt.subplots(figsize=(8, 4.4))
     colors = ["#2a78d6", "#2a78d6", "#e34948", "#1baf7a"]
@@ -571,16 +514,9 @@ def make_vif_figure(plt) -> None:
     ax.axvline(5, color="#b23434", linestyle="--", linewidth=1.2)
     ax.text(5.05, 3.4, "concern threshold (5-10)", color="#b23434", fontsize=9)
     ax.set_xlim(0, 6.5)
-    ax.set_xlabel("Variance Inflation Factor")
-    ax.set_title(
-        "Scoped VIF: the 4 variables with real, non-definitional relationships\n%s" % provenance,
-        fontsize=10.5,
-    )
+    ax.set_xlabel("variance inflation factor   (n = %s)" % n)
     fig.tight_layout()
-    out = OUTPUT_DIR / "vif.png"
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print("Wrote", out)
+    _save(fig, "vif")
 
 
 def _offered_load_flip_counts() -> List[tuple]:
@@ -610,26 +546,18 @@ def make_offered_load_figure(plt) -> None:
     counts = _offered_load_flip_counts()
     if not counts:
         return
-    pairs = [p + ("\n(PRIMARY_PAIR)" if p == "2->7" else "") for p, _ in counts]
+    pairs = [p.replace("->", "→") for p, _ in counts]
     flips = [f for _, f in counts]
     n_rates = 5
     fig, ax = plt.subplots(figsize=(9, 4.6))
     colors = ["#1baf7a" if f > 0 else "#94a3ab" for f in flips]
     bars = ax.bar(pairs, flips, color=colors, alpha=0.85)
-    ax.bar_label(bars, labels=[f"{f}/{n_rates} rates flip" for f in flips])
+    ax.bar_label(bars, labels=[f"{f} / {n_rates}" for f in flips])
     ax.set_ylim(0, n_rates + 1)
-    ax.set_ylabel("background rates (of %d tested) where the\ncorrection changes the decision" % n_rates)
-    ax.set_title(
-        "Real-hardware offered-load recovery check, %d node pairs\n"
-        "PRIMARY_PAIR's original single-rate check (24 Mbps) had found no boundary at all"
-        % len(pairs),
-        fontsize=11.5,
-    )
-    fig.tight_layout(rect=(0.03, 0, 1, 1))
-    out = OUTPUT_DIR / "offered_load_recovery.png"
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print("Wrote", out)
+    ax.set_xlabel("monitored node pair")
+    ax.set_ylabel("background rates (of %d) at which the offered-load\ncorrection changes the accept / reject decision" % n_rates)
+    fig.tight_layout()
+    _save(fig, "offered_load_recovery")
 
 
 def main() -> None:
@@ -637,13 +565,19 @@ def main() -> None:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     plt.rcParams.update({
-        "font.size": 10.5,
+        "font.family": "DejaVu Sans",
+        "font.size": 11,
+        "axes.titlesize": 11.5,
+        "axes.labelsize": 10.5,
+        "legend.fontsize": 8.5,
         "axes.edgecolor": "#c3c2b7",
         "axes.grid": True,
-        "grid.color": "#e1e0d9",
-        "grid.linewidth": 0.7,
+        "grid.color": "#e6e5df",
+        "grid.linewidth": 0.6,
         "figure.facecolor": "white",
         "axes.facecolor": "white",
+        "savefig.bbox": "tight",
+        "pdf.fonttype": 42,   # embed TrueType, not Type-3, for camera-ready PDFs
     })
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
