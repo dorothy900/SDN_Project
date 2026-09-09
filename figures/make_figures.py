@@ -170,6 +170,9 @@ def make_stale_stats_figure(plt) -> None:
     ax.set_title("(a) Robustness vs responsiveness")
     ax.legend(fontsize=9)
     ax.set_ylim(0, 115)
+    ax.annotate("static never reroutes,\nso both rates are 0", xy=(0, 1.5), xytext=(0, 38),
+                ha="center", fontsize=9, color="#6b7280",
+                arrowprops=dict(arrowstyle="->", color="#9ca3af", lw=1.0))
 
     ax = axes[1]
     samples = [int(r["sample"]) for r in dd_rows]
@@ -192,7 +195,7 @@ def make_stale_stats_figure(plt) -> None:
 
 def make_priority_policy_figure(plt) -> None:
     rows = _load_csv(Path("results/priority_policy_generalization/summary.csv"))
-    fig, ax = plt.subplots(figsize=(9, 5.2))
+    fig, ax = plt.subplots(figsize=(9, 3.7))
     classes = [
         ("voip_mean_sample", "VoIP", "#2a78d6"),
         ("video_mean_sample", "Video", "#2a78d6"),
@@ -215,8 +218,8 @@ def make_priority_policy_figure(plt) -> None:
     ax.set_xticklabels([label for _, label, _ in classes])
     ax.set_xlim(0.5, len(classes) + 0.5)
     ax.set_ylabel("mean first-reroute sample  (per node pair, n = 23)")
-    ax.text(0.02, 0.97, "bar = median · whiskers = min / max", transform=ax.transAxes,
-            fontsize=8, va="top", color="#555")
+    ax.text(0.72, 0.30, "bar = median   whiskers = min / max", transform=ax.transAxes,
+            fontsize=9, ha="center", va="center", color="#555")
 
     fig.tight_layout()
     _save(fig, "priority_policy")
@@ -234,7 +237,9 @@ def make_congestion_figure(plt) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.2))
     algos = ("static", "dynamic", "proposed")
     phases = ("temporary", "sustained")
-    phase_labels = {"temporary": "transient\n(8 samples,\n2 violating)", "sustained": "sustained\n(12 samples,\n6 violating)"}
+    # Sample counts (transient: 8 samples / 2 over threshold; sustained: 12 / 6)
+    # are stated in the caption, not on the axis -- see congestion_generalization.py.
+    phase_labels = {"temporary": "transient", "sustained": "sustained"}
 
     ax = axes[0]
     data, tick_labels, colors = [], [], []
@@ -263,7 +268,7 @@ def make_congestion_figure(plt) -> None:
         bars = ax.bar([xi + (i - 1) * width for xi in x], vals, width, label=algo, color=COLOR[algo], alpha=0.85)
         ax.bar_label(bars, fmt="%.2f")
     ax.set_xticks(list(x))
-    ax.set_xticklabels([phase_labels[p].replace("\n", " ") for p in phases], fontsize=8.5)
+    ax.set_xticklabels([phase_labels[p] for p in phases])
     ax.set_ylabel("mean reroute count, n=23 pairs")
     ax.set_ylim(0, 1.3)
     ax.set_title("(b) Reroute count — identical for dynamic and proposed here")
@@ -325,6 +330,9 @@ def make_resilience_avoidance_figure(plt) -> None:
     """
     all_rows = [r for r in _load_csv(Path("results/resilience_avoidance/summary.csv"))
                 if int(r["scored_seeds"]) > 0]
+    # Episode length: static / dynamic ride the anomaly link every sample, so the
+    # largest on-anomaly-link count in the data is the per-episode sample count.
+    episode_samples = int(round(max(float(r["static_on_anomaly_link_samples"]) for r in all_rows)))
     labels = {"proposed_noresil": "static / dynamic /\nproposed (resil. OFF)",
               "proposed": "proposed\n(resil. ON)"}
     colors = {"proposed_noresil": "#c98a2b", "proposed": COLOR["proposed"]}
@@ -360,8 +368,8 @@ def make_resilience_avoidance_figure(plt) -> None:
         ax.set_xticklabels([labels[a] for a in algos], fontsize=9)
         ax.set_ylabel("mean flow delay\nover the episode (ms)")
         exposure = _mean("proposed_on_anomaly_link_samples")
-        ax.set_title("(%s) %s — flow delay\n(proposed rides the bad link only %.0f of 21 samples)"
-                     % (next(panel), scen_label[scenario], exposure))
+        ax.set_title("(%s) %s — flow delay\n(proposed rides the bad link only %.0f of %d samples)"
+                     % (next(panel), scen_label[scenario], exposure, episode_samples))
 
     fig.tight_layout()
     _save(fig, "resilience_avoidance")
@@ -406,7 +414,7 @@ def make_resilience_figure(plt) -> None:
     ax.set_xlabel("FPR  (false positives on 'one legitimate transition')")
     ax.set_ylabel("TPR  (true positives on 'genuinely flapping')")
     ax.set_title("(a) Flap signal — ROC by half-life")
-    ax.legend(fontsize=8, loc="lower right")
+    ax.legend(fontsize=9, loc="lower right")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.02, 1.02)
 
@@ -423,13 +431,13 @@ def make_resilience_figure(plt) -> None:
     ax.axvline(0.57, color="#e34948", linestyle="--", linewidth=1.4, label="operating point = 0.57")
     ax.axvline(0.70, color="#94a3ab", linestyle=":", linewidth=1.2, label="earlier hand-picked value = 0.70")
     ax.annotate("0.57 confirmed on real\nOVS + iperf  (4/4 PASS)",
-                xy=(0.57, 0.55), xytext=(0.74, 0.42), fontsize=7, color="#1a8f5a",
+                xy=(0.57, 0.52), xytext=(0.63, 0.30), fontsize=10, color="#1a8f5a",
                 ha="left", va="center",
                 arrowprops=dict(arrowstyle="->", color="#1a8f5a", lw=1.1))
     ax.set_xlabel("avoidance threshold")
     ax.set_ylabel("Youden's J  =  TPR − FPR")
     ax.set_title("(b) Flap signal (half-life 20 s) — Youden's J vs threshold")
-    ax.legend(fontsize=8, loc="lower left")
+    ax.legend(fontsize=9, loc="lower left")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.05, 1.08)
 
@@ -449,7 +457,7 @@ def make_resilience_figure(plt) -> None:
     ax.set_xlabel("FPR  (honest pricing / isolated bad polls)")
     ax.set_ylabel("TPR  (sustained excess loss)")
     ax.set_title("(c) Loss signal — ROC by loss-level cap")
-    ax.legend(fontsize=8, loc="lower right")
+    ax.legend(fontsize=9, loc="lower right")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.02, 1.02)
 
@@ -464,7 +472,7 @@ def make_resilience_figure(plt) -> None:
                label=f"Youden-optimal = {t[j_best]:.2f} (J={j[j_best]:.2f})")
     ax.axvline(0.57, color="#e34948", linestyle="--", linewidth=1.4, label="operating point = 0.57")
     ax.annotate("0.57 confirmed on real\nOVS + iperf  (10/10 PASS)",
-                xy=(0.57, 0.55), xytext=(0.70, 0.40), fontsize=7, color="#1a8f5a",
+                xy=(0.57, 0.52), xytext=(0.63, 0.30), fontsize=10, color="#1a8f5a",
                 ha="left", va="center",
                 arrowprops=dict(arrowstyle="->", color="#1a8f5a", lw=1.1))
     cfg_cap_row = next((r for r in loss_caps_csv if abs(float(r["loss_level_cap"]) - CONFIG_CAP) < 1e-9), None)
@@ -476,7 +484,7 @@ def make_resilience_figure(plt) -> None:
         ax.set_title("(d) Loss signal (loss-level cap 0.05) — Youden's J vs threshold")
     ax.set_xlabel("avoidance threshold")
     ax.set_ylabel("Youden's J  =  TPR − FPR")
-    ax.legend(fontsize=8, loc="lower left")
+    ax.legend(fontsize=9, loc="lower left")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.05, 1.08)
 
@@ -521,10 +529,11 @@ def make_vif_figure(plt) -> None:
 
 def _offered_load_flip_counts() -> List[tuple]:
     """
-    (pair_label, flip_count) from the real per-pair reports the mininet
-    offered-load check wrote. A 'flip' is a background rate where the
+    (pair_label, flip_count, rates_swept) from the real per-pair reports the
+    mininet offered-load check wrote. A 'flip' is a background rate where the
     offered-load correction changed the accept/reject decision
-    (without_accepted != with_accepted in that pair's markdown table).
+    (without_accepted != with_accepted in that pair's markdown table);
+    rates_swept is that pair's total number of rate rows.
     """
     base = Path("results/mininet_offered_load_recovery_check")
     out = []
@@ -533,12 +542,13 @@ def _offered_load_flip_counts() -> List[tuple]:
             continue
         src, dst = d.name.split("_", 1)
         text = (d / "report.md").read_text() if (d / "report.md").exists() else ""
-        flips = 0
+        flips = rates = 0
         for line in text.splitlines():
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
             if len(cells) >= 4 and cells[2] in ("True", "False") and cells[3] in ("True", "False"):
+                rates += 1
                 flips += cells[2] != cells[3]
-        out.append(("%s->%s" % (src, dst), flips))
+        out.append(("%s->%s" % (src, dst), flips, rates))
     return out
 
 
@@ -546,16 +556,17 @@ def make_offered_load_figure(plt) -> None:
     counts = _offered_load_flip_counts()
     if not counts:
         return
-    pairs = [p.replace("->", "→") for p, _ in counts]
-    flips = [f for _, f in counts]
-    n_rates = 5
+    pairs = [p.replace("->", "→") for p, _, _ in counts]
+    flips = [f for _, f, _ in counts]
+    rate_counts = {r for _, _, r in counts}
+    n_rates = max(rate_counts)
     fig, ax = plt.subplots(figsize=(9, 4.6))
     colors = ["#1baf7a" if f > 0 else "#94a3ab" for f in flips]
     bars = ax.bar(pairs, flips, color=colors, alpha=0.85)
-    ax.bar_label(bars, labels=[f"{f} / {n_rates}" for f in flips])
+    ax.bar_label(bars, labels=[f"{f} / {r}" for _, f, r in counts])
     ax.set_ylim(0, n_rates + 1)
     ax.set_xlabel("monitored node pair")
-    ax.set_ylabel("background rates (of %d) at which the offered-load\ncorrection changes the accept / reject decision" % n_rates)
+    ax.set_ylabel("decision flips across the rate sweep")
     fig.tight_layout()
     _save(fig, "offered_load_recovery")
 
