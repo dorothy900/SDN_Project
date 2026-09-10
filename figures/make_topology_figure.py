@@ -89,7 +89,7 @@ def make_topology_figure(plt) -> None:
         else:
             ax.scatter([x], [y], s=42, color="white", edgecolor="#5a6472", linewidth=1.0, zorder=3)
         label = graph.nodes[n].get("label", n)
-        ax.annotate(label, (x, y), textcoords="offset points", xytext=(4, 3), fontsize=6.6, color="#3d4a5c", zorder=5)
+        ax.annotate(label, (x, y), textcoords="offset points", xytext=(4, 3), fontsize=11.6, color="#3d4a5c", zorder=5)
 
     # --- Legend (manual proxy artists -- this is a geographic line/scatter
     # plot, not something matplotlib's own legend can infer tier styling from) ---
@@ -106,10 +106,10 @@ def make_topology_figure(plt) -> None:
         Line2D([0], [0], marker="o", color="none", markerfacecolor="#1baf7a", markeredgecolor="#0d5c3b",
                markersize=9, label="monitored pair (node 0 – node 12)"),
     ]
-    ax.legend(handles=legend_elems, loc="lower left", fontsize=7.6, framealpha=0.92)
+    ax.legend(handles=legend_elems, loc="lower left", fontsize=11.6, framealpha=0.92)
 
-    ax.set_xlabel("longitude")
-    ax.set_ylabel("latitude")
+    ax.set_xlabel("longitude", fontsize=14)
+    ax.set_ylabel("latitude", fontsize=14)
     ax.set_aspect(1.55)  # crude equirectangular correction for this latitude band, not a true projection
     fig.tight_layout()
     for ext in ("png", "pdf"):
