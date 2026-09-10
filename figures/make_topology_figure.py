@@ -60,7 +60,10 @@ def make_topology_figure(plt) -> None:
         else:
             pos[n] = MISSING_COORDS_FALLBACK[n]
 
-    fig, ax = plt.subplots(figsize=(11, 10.5))
+    import matplotlib.patheffects as pe
+
+    fig, ax = plt.subplots(figsize=(11.5, 11))
+    halo = [pe.withStroke(linewidth=2.6, foreground="white")]
 
     # --- Edges, real capacity tier by width/color; the two structural bridges
     # and the real congestion-demo hotspot link drawn last, on top, highlighted. ---
@@ -83,13 +86,36 @@ def make_topology_figure(plt) -> None:
     ax.plot([x0, x1], [y0, y1], color="#1baf7a", linewidth=3.0, zorder=2)
 
     # --- Nodes ---
+    # Most labels sit just above-right of their dot; these few are nudged the
+    # other way so they clear a close neighbour, a big monitored-pair marker,
+    # or a converging bundle of edges. (dx pt, dy pt, ha, va)
+    default_off = (4, 3, "left", "bottom")
+    label_off = {
+        "AT": (-4, 3, "right", "bottom"),   # AT / SK almost coincident
+        "SK": (5, 2, "left", "bottom"),
+        "SL": (-4, 4, "right", "bottom"),   # SL / HR close
+        "HR": (5, -3, "left", "top"),
+        "ME": (-4, 3, "right", "bottom"),   # ME / MK close, red bridge line between
+        "MK": (0, -7, "center", "top"),
+        "LU": (0, -9, "center", "top"),     # LU crowds FR's label and the DE hub
+        "BG": (10, 0, "left", "center"),    # clear the big green marker + RS above
+        "NL": (10, 4, "left", "bottom"),    # clear the big green marker
+        "ES": (-4, 4, "right", "bottom"),   # off the ES–FR edge
+        "IT": (-5, -6, "right", "top"),     # off the IT hub bundle
+        "CH": (2, -9, "center", "top"),
+        "CZ": (5, -3, "left", "top"),
+        "PL": (5, 3, "left", "bottom"),
+    }
     for n, (x, y) in pos.items():
         if n in MONITORED_PAIR:
-            ax.scatter([x], [y], s=110, color="#1baf7a", edgecolor="#0d5c3b", linewidth=1.3, zorder=4)
+            ax.scatter([x], [y], s=120, color="#1baf7a", edgecolor="#0d5c3b", linewidth=1.3, zorder=4)
         else:
             ax.scatter([x], [y], s=42, color="white", edgecolor="#5a6472", linewidth=1.0, zorder=3)
         label = graph.nodes[n].get("label", n)
-        ax.annotate(label, (x, y), textcoords="offset points", xytext=(4, 3), fontsize=11.6, color="#3d4a5c", zorder=5)
+        dx, dy, ha, va = label_off.get(label, default_off)
+        ax.annotate(label, (x, y), textcoords="offset points", xytext=(dx, dy),
+                    ha=ha, va=va, fontsize=11.6, color="#2d3a4c", zorder=5,
+                    path_effects=halo)
 
     # --- Legend (manual proxy artists -- this is a geographic line/scatter
     # plot, not something matplotlib's own legend can infer tier styling from) ---
@@ -106,7 +132,10 @@ def make_topology_figure(plt) -> None:
         Line2D([0], [0], marker="o", color="none", markerfacecolor="#1baf7a", markeredgecolor="#0d5c3b",
                markersize=9, label="monitored pair (node 0 – node 12)"),
     ]
-    ax.legend(handles=legend_elems, loc="lower left", fontsize=11.6, framealpha=0.92)
+    # Legend below the map (the area south of ~30 degN is empty) so it never
+    # sits on top of the network itself.
+    ax.legend(handles=legend_elems, loc="upper center", bbox_to_anchor=(0.5, -0.07),
+              ncol=2, fontsize=11, framealpha=0.92, borderaxespad=0)
 
     ax.set_xlabel("longitude", fontsize=14)
     ax.set_ylabel("latitude", fontsize=14)
@@ -114,7 +143,7 @@ def make_topology_figure(plt) -> None:
     fig.tight_layout()
     for ext in ("png", "pdf"):
         out = OUTPUT_DIR / f"topology.{ext}"
-        fig.savefig(out, dpi=170 if ext == "png" else None)
+        fig.savefig(out, dpi=170 if ext == "png" else None, bbox_inches="tight")
         print("Wrote", out)
     plt.close(fig)
 
