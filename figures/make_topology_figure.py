@@ -108,37 +108,46 @@ def make_topology_figure(plt) -> None:
     }
     for n, (x, y) in pos.items():
         if n in MONITORED_PAIR:
-            ax.scatter([x], [y], s=120, color="#1baf7a", edgecolor="#0d5c3b", linewidth=1.3, zorder=4)
+            ax.scatter([x], [y], s=130, color="#1baf7a", edgecolor="#0d5c3b", linewidth=1.3, zorder=4)
         else:
-            ax.scatter([x], [y], s=42, color="white", edgecolor="#5a6472", linewidth=1.0, zorder=3)
+            ax.scatter([x], [y], s=46, color="white", edgecolor="#5a6472", linewidth=1.0, zorder=3)
         label = graph.nodes[n].get("label", n)
         dx, dy, ha, va = label_off.get(label, default_off)
         ax.annotate(label, (x, y), textcoords="offset points", xytext=(dx, dy),
-                    ha=ha, va=va, fontsize=11.6, color="#2d3a4c", zorder=5,
+                    ha=ha, va=va, fontsize=13, color="#2d3a4c", zorder=5,
                     path_effects=halo)
 
     # --- Legend (manual proxy artists -- this is a geographic line/scatter
-    # plot, not something matplotlib's own legend can infer tier styling from) ---
+    # plot, not something matplotlib's own legend can infer tier styling from).
+    # Kept inside, lower-left: the axis limits below open an empty pocket there
+    # so it never sits on an edge or a node label. ---
     from matplotlib.lines import Line2D
     legend_elems = [
-        Line2D([0], [0], color=TIER_STYLE["10 Gbps"][1], linewidth=TIER_STYLE["10 Gbps"][0], label="10 Gbps / Lit Fibre (real label)"),
-        Line2D([0], [0], color=TIER_STYLE["2.5 Gbps"][1], linewidth=TIER_STYLE["2.5 Gbps"][0], label="2.5 Gbps (real label)"),
-        Line2D([0], [0], color=TIER_STYLE["1 Gbps"][1], linewidth=TIER_STYLE["1 Gbps"][0], label="1 Gbps (real label)"),
-        Line2D([0], [0], color=TIER_STYLE["155 Mbps"][1], linewidth=TIER_STYLE["155 Mbps"][0], label="155 Mbps (real label)"),
-        Line2D([0], [0], color=TIER_STYLE[None][1], linewidth=TIER_STYLE[None][0], label="no published label (falls back to default)"),
+        Line2D([0], [0], color=TIER_STYLE["10 Gbps"][1], linewidth=TIER_STYLE["10 Gbps"][0], label="10 Gbps / Lit Fibre"),
+        Line2D([0], [0], color=TIER_STYLE["2.5 Gbps"][1], linewidth=TIER_STYLE["2.5 Gbps"][0], label="2.5 Gbps"),
+        Line2D([0], [0], color=TIER_STYLE["1 Gbps"][1], linewidth=TIER_STYLE["1 Gbps"][0], label="1 Gbps"),
+        Line2D([0], [0], color=TIER_STYLE["155 Mbps"][1], linewidth=TIER_STYLE["155 Mbps"][0], label="155 Mbps"),
+        Line2D([0], [0], color=TIER_STYLE[None][1], linewidth=TIER_STYLE[None][0], label="no published capacity label"),
         Line2D([0], [0], color="#e34948", linewidth=2.2, linestyle=(0, (4, 2)),
-               label="structural bridge (12–20, 21–27):  no alternative\nroute anywhere in the graph for either endpoint"),
-        Line2D([0], [0], color="#1baf7a", linewidth=3.0, label="hotspot link 0–4  (induced-congestion demo)"),
+               label="structural bridge (12–20, 21–27) — no alternative route"),
+        Line2D([0], [0], color="#1baf7a", linewidth=3.0, label="hotspot link 0–4 (induced-congestion demo)"),
         Line2D([0], [0], marker="o", color="none", markerfacecolor="#1baf7a", markeredgecolor="#0d5c3b",
-               markersize=9, label="monitored pair (node 0 – node 12)"),
+               markersize=10, label="monitored pair (nodes 0, 12)"),
     ]
     # Legend below the map (the area south of ~30 degN is empty) so it never
     # sits on top of the network itself.
-    ax.legend(handles=legend_elems, loc="upper center", bbox_to_anchor=(0.5, -0.07),
-              ncol=2, fontsize=11, framealpha=0.92, borderaxespad=0)
+    # Open extra room below/left of the southern-/westernmost nodes (PT, ES,
+    # IL) so the lower-left legend sits on white space, not the graph.
+    xs = [p[0] for p in pos.values()]
+    ys = [p[1] for p in pos.values()]
+    ax.set_xlim(min(xs) - 3, max(xs) + 3)
+    ax.set_ylim(min(ys) - 10, max(ys) + 2)
+    ax.legend(handles=legend_elems, loc="lower left", fontsize=12.5,
+              framealpha=0.95, borderaxespad=0.8, handlelength=2.4)
 
-    ax.set_xlabel("longitude", fontsize=14)
-    ax.set_ylabel("latitude", fontsize=14)
+    ax.set_xlabel("longitude", fontsize=15)
+    ax.set_ylabel("latitude", fontsize=15)
+    ax.tick_params(labelsize=13)
     ax.set_aspect(1.55)  # crude equirectangular correction for this latitude band, not a true projection
     fig.tight_layout()
     for ext in ("png", "pdf"):
