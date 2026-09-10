@@ -80,7 +80,7 @@ def make_failure_recovery_figure(plt) -> None:
     ax.set_xlabel("hop count")
     ax.set_ylabel("proposed's delay improvement over dynamic (%)")
     ax.set_title("(b) Improvement vs hop count (stable case)")
-    ax.legend(fontsize=9)
+    ax.legend()
 
     fig.tight_layout()
     _save(fig, "failure_recovery")
@@ -108,7 +108,7 @@ def make_failure_recovery_reroute_count_figure(plt) -> None:
     ax.set_xticks(list(x))
     ax.set_xticklabels(cases)
     ax.set_ylabel("mean reroute count per run, n=23 pairs")
-    ax.legend(fontsize=9)
+    ax.legend()
 
     fig.tight_layout()
     _save(fig, "failure_recovery_reroute_count")
@@ -126,17 +126,10 @@ def make_increasing_load_figure(plt) -> None:
         ax.plot(load, mean, label=algo, color=COLOR[algo], linewidth=2.2)
         ax.fill_between(load, [m - s for m, s in zip(mean, std)], [m + s for m, s in zip(mean, std)],
                          color=COLOR[algo], alpha=0.15)
-    ax.axvline(0.75, color="#c3c2b7", linestyle=":", linewidth=1)
-    ax.annotate("dynamic reroutes\n(sample 10)", xy=(0.755, 90), xytext=(0.50, 320),
-                fontsize=8.5, color=COLOR["dynamic"],
-                arrowprops=dict(arrowstyle="->", color=COLOR["dynamic"], lw=1))
-    ax.annotate("proposed reroutes\n2 samples later", xy=(0.83, 42), xytext=(0.60, 130),
-                fontsize=8.5, color=COLOR["proposed"],
-                arrowprops=dict(arrowstyle="->", color=COLOR["proposed"], lw=1))
     ax.set_xlabel("offered load (fraction of link capacity)")
-    ax.set_ylabel("mean delay (ms), +/-1 s.d.")
+    ax.set_ylabel("mean delay (ms), ±1 s.d.")
     ax.set_title("(a) Delay vs offered load")
-    ax.legend(fontsize=9)
+    ax.legend()
 
     ax = axes[1]
     algos = ("static", "dynamic", "proposed")
@@ -168,11 +161,8 @@ def make_stale_stats_figure(plt) -> None:
     ax.set_xticklabels(algos)
     ax.set_ylabel("% of 23 pairs x 5 seeds (n=115)")
     ax.set_title("(a) Robustness vs responsiveness")
-    ax.legend(fontsize=9)
+    ax.legend()
     ax.set_ylim(0, 115)
-    ax.annotate("static never reroutes,\nso both rates are 0", xy=(0, 1.5), xytext=(0, 38),
-                ha="center", fontsize=9, color="#6b7280",
-                arrowprops=dict(arrowstyle="->", color="#9ca3af", lw=1.0))
 
     ax = axes[1]
     samples = [int(r["sample"]) for r in dd_rows]
@@ -182,12 +172,11 @@ def make_stale_stats_figure(plt) -> None:
         ax.plot(samples, mean, label=algo, color=COLOR[algo], linewidth=2.2)
         ax.fill_between(samples, [m - s for m, s in zip(mean, std)], [m + s for m, s in zip(mean, std)],
                          color=COLOR[algo], alpha=0.15)
-    ax.axvspan(4, 9, color="#e34948", alpha=0.06)
-    ax.annotate("real congestion window\n(polls 5 & 7 report stale)", xy=(4.2, 400), fontsize=8.5, color="#b23434")
+    ax.axvspan(4, 9, color="#e34948", alpha=0.08, label="injected congestion")
     ax.set_xlabel("sample")
     ax.set_ylabel("delay (ms)")
     ax.set_title("(b) Delayed-detection phase: delay vs sample")
-    ax.legend(fontsize=9)
+    ax.legend()
 
     fig.tight_layout()
     _save(fig, "stale_stats")
@@ -195,7 +184,7 @@ def make_stale_stats_figure(plt) -> None:
 
 def make_priority_policy_figure(plt) -> None:
     rows = _load_csv(Path("results/priority_policy_generalization/summary.csv"))
-    fig, ax = plt.subplots(figsize=(9, 3.7))
+    fig, ax = plt.subplots(figsize=(9, 4.3))
     classes = [
         ("voip_mean_sample", "VoIP", "#2a78d6"),
         ("video_mean_sample", "Video", "#2a78d6"),
@@ -218,8 +207,10 @@ def make_priority_policy_figure(plt) -> None:
     ax.set_xticklabels([label for _, label, _ in classes])
     ax.set_xlim(0.5, len(classes) + 0.5)
     ax.set_ylabel("mean first-reroute sample  (per node pair, n = 23)")
-    ax.text(0.72, 0.30, "bar = median   whiskers = min / max", transform=ax.transAxes,
-            fontsize=9, ha="center", va="center", color="#555")
+    from matplotlib.lines import Line2D
+    ax.legend(handles=[Line2D([0], [0], color="#555", lw=2.4, label="median"),
+                       Line2D([0], [0], color="#555", lw=1.0, alpha=0.6, label="min / max")],
+              loc="center right", framealpha=0.9)
 
     fig.tight_layout()
     _save(fig, "priority_policy")
@@ -271,8 +262,8 @@ def make_congestion_figure(plt) -> None:
     ax.set_xticklabels([phase_labels[p] for p in phases])
     ax.set_ylabel("mean reroute count, n=23 pairs")
     ax.set_ylim(0, 1.3)
-    ax.set_title("(b) Reroute count — identical for dynamic and proposed here")
-    ax.legend(fontsize=9)
+    ax.set_title("(b) Reroute count per phase")
+    ax.legend()
 
     fig.tight_layout()
     _save(fig, "congestion")
@@ -341,7 +332,7 @@ def make_resilience_avoidance_figure(plt) -> None:
     scen_label = {"abnormal_loss": "Abnormal loss (sudden shift)",
                   "chronic_loss": "Chronic loss (bad from the start)"}
     panel = iter("abcd")
-    fig, axes = plt.subplots(2, 2, figsize=(11, 9))
+    fig, axes = plt.subplots(2, 2, figsize=(12.5, 10.5))
     for row, scenario in enumerate(("abnormal_loss", "chronic_loss")):
         rows = [r for r in all_rows if r["scenario"] == scenario]
         _mean = lambda col: st.mean([float(r[col]) for r in rows])
@@ -354,22 +345,23 @@ def make_resilience_avoidance_figure(plt) -> None:
                       color=[colors[a] for a in algos], alpha=0.9)
         ax.bar_label(bars, fmt="%.2f", padding=6)
         ax.set_xticks(range(len(algos)))
-        ax.set_xticklabels([labels[a] for a in algos], fontsize=9)
+        ax.set_xticklabels([labels[a] for a in algos])
         ax.set_ylabel("mean flow packet loss\nover the episode (%)")
         ax.set_title("(%s) %s — flow packet loss" % (next(panel), scen_label[scenario]))
 
         ax = axes[row][1]
         means = [_mean(f"{a}_delay_ms") for a in algos]
         stds = [_pstd(f"{a}_delay_ms") for a in algos]
+        exposure = [_mean(f"{a}_on_anomaly_link_samples") for a in algos]
         bars = ax.bar(range(len(algos)), means, 0.55, yerr=stds, capsize=4,
                       color=[colors[a] for a in algos], alpha=0.9)
-        ax.bar_label(bars, fmt="%.0f", padding=6)
+        ax.bar_label(bars, labels=["%.0f ms\n(%.0f/%d on bad link)" % (m, e, episode_samples)
+                                   for m, e in zip(means, exposure)], padding=6)
         ax.set_xticks(range(len(algos)))
-        ax.set_xticklabels([labels[a] for a in algos], fontsize=9)
+        ax.set_xticklabels([labels[a] for a in algos])
         ax.set_ylabel("mean flow delay\nover the episode (ms)")
-        exposure = _mean("proposed_on_anomaly_link_samples")
-        ax.set_title("(%s) %s — flow delay\n(proposed rides the bad link only %.0f of %d samples)"
-                     % (next(panel), scen_label[scenario], exposure, episode_samples))
+        ax.set_ylim(0, max(means) * 1.45)
+        ax.set_title("(%s) %s — flow delay" % (next(panel), scen_label[scenario]))
 
     fig.tight_layout()
     _save(fig, "resilience_avoidance")
@@ -414,7 +406,7 @@ def make_resilience_figure(plt) -> None:
     ax.set_xlabel("FPR  (false positives on 'one legitimate transition')")
     ax.set_ylabel("TPR  (true positives on 'genuinely flapping')")
     ax.set_title("(a) Flap signal — ROC by half-life")
-    ax.legend(fontsize=9, loc="lower right")
+    ax.legend(loc="lower right")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.02, 1.02)
 
@@ -430,14 +422,10 @@ def make_resilience_figure(plt) -> None:
                    label=f"J=1.0 plateau [{plateau[0]:.2f}, {plateau[-1]:.2f}]")
     ax.axvline(0.57, color="#e34948", linestyle="--", linewidth=1.4, label="operating point = 0.57")
     ax.axvline(0.70, color="#94a3ab", linestyle=":", linewidth=1.2, label="earlier hand-picked value = 0.70")
-    ax.annotate("0.57 confirmed on real\nOVS + iperf  (4/4 PASS)",
-                xy=(0.57, 0.52), xytext=(0.63, 0.30), fontsize=10, color="#1a8f5a",
-                ha="left", va="center",
-                arrowprops=dict(arrowstyle="->", color="#1a8f5a", lw=1.1))
     ax.set_xlabel("avoidance threshold")
     ax.set_ylabel("Youden's J  =  TPR − FPR")
     ax.set_title("(b) Flap signal (half-life 20 s) — Youden's J vs threshold")
-    ax.legend(fontsize=9, loc="lower left")
+    ax.legend(loc="lower left")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.05, 1.08)
 
@@ -457,7 +445,7 @@ def make_resilience_figure(plt) -> None:
     ax.set_xlabel("FPR  (honest pricing / isolated bad polls)")
     ax.set_ylabel("TPR  (sustained excess loss)")
     ax.set_title("(c) Loss signal — ROC by loss-level cap")
-    ax.legend(fontsize=9, loc="lower right")
+    ax.legend(loc="lower right")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.02, 1.02)
 
@@ -470,21 +458,17 @@ def make_resilience_figure(plt) -> None:
     j_best = max(range(len(j)), key=lambda i: j[i])
     ax.axvline(t[j_best], color="#1baf7a", linestyle=":", linewidth=1.3,
                label=f"Youden-optimal = {t[j_best]:.2f} (J={j[j_best]:.2f})")
-    ax.axvline(0.57, color="#e34948", linestyle="--", linewidth=1.4, label="operating point = 0.57")
-    ax.annotate("0.57 confirmed on real\nOVS + iperf  (10/10 PASS)",
-                xy=(0.57, 0.52), xytext=(0.63, 0.30), fontsize=10, color="#1a8f5a",
-                ha="left", va="center",
-                arrowprops=dict(arrowstyle="->", color="#1a8f5a", lw=1.1))
     cfg_cap_row = next((r for r in loss_caps_csv if abs(float(r["loss_level_cap"]) - CONFIG_CAP) < 1e-9), None)
     if cfg_cap_row is not None:
-        ax.set_title("(d) Loss signal (loss-level cap 0.05) — Youden's J vs threshold\n"
-                     "at 0.57:  TPR = %.2f,  FPR = %.2f"
-                     % (float(cfg_cap_row["tpr_at_config_0.57"]), float(cfg_cap_row["fpr_at_config_0.57"])))
+        op_label = "operating point = 0.57  (TPR %.2f, FPR %.2f)" % (
+            float(cfg_cap_row["tpr_at_config_0.57"]), float(cfg_cap_row["fpr_at_config_0.57"]))
     else:
-        ax.set_title("(d) Loss signal (loss-level cap 0.05) — Youden's J vs threshold")
+        op_label = "operating point = 0.57"
+    ax.axvline(0.57, color="#e34948", linestyle="--", linewidth=1.4, label=op_label)
+    ax.set_title("(d) Loss signal (loss-level cap 0.05) — Youden's J vs threshold")
     ax.set_xlabel("avoidance threshold")
     ax.set_ylabel("Youden's J  =  TPR − FPR")
-    ax.legend(fontsize=9, loc="lower left")
+    ax.legend(loc="lower left")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.05, 1.08)
 
@@ -515,12 +499,13 @@ def make_vif_figure(plt) -> None:
     values = [by_var[k] for k in keys]
     n = scoped_rows[0]["n"]
 
-    fig, ax = plt.subplots(figsize=(8, 4.4))
+    fig, ax = plt.subplots(figsize=(8, 4.6))
     colors = ["#2a78d6", "#2a78d6", "#e34948", "#1baf7a"]
     bars = ax.barh(labels, values, color=colors, alpha=0.85)
     ax.bar_label(bars, fmt="%.3f", padding=4)
-    ax.axvline(5, color="#b23434", linestyle="--", linewidth=1.2)
-    ax.text(5.05, 3.4, "concern threshold (5-10)", color="#b23434", fontsize=9)
+    ax.axvline(5, color="#b23434", linestyle="--", linewidth=1.2,
+               label="conventional concern threshold (VIF 5–10)")
+    ax.legend(loc="lower right")
     ax.set_xlim(0, 6.5)
     ax.set_xlabel("variance inflation factor   (n = %s)" % n)
     fig.tight_layout()
@@ -577,10 +562,12 @@ def main() -> None:
     import matplotlib.pyplot as plt
     plt.rcParams.update({
         "font.family": "DejaVu Sans",
-        "font.size": 11,
-        "axes.titlesize": 11.5,
-        "axes.labelsize": 10.5,
-        "legend.fontsize": 8.5,
+        "font.size": 12.5,
+        "axes.titlesize": 14,
+        "axes.labelsize": 13,
+        "legend.fontsize": 11,
+        "xtick.labelsize": 11.5,
+        "ytick.labelsize": 11.5,
         "axes.edgecolor": "#c3c2b7",
         "axes.grid": True,
         "grid.color": "#e6e5df",
