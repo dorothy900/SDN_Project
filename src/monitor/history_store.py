@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-History Store - Store historical network data
-Week 2 Day 3: Rolling history window with current, mean, max, trend
+History Store - store historical network data in a rolling window,
+exposing current/mean/max/trend summaries.
 """
 from collections import deque
 from datetime import datetime
@@ -77,6 +77,48 @@ class LinkHistory:
         
         return last_avg - first_avg
     
+    # Same 3-sigma shift-detection convention as LossJitterTracker.get_abnormal_loss_score
+    # (Shewhart-control-chart style: a shift of 3+ baseline standard deviations is the
+    # standard statistical-process-control threshold for "real anomaly, not normal
+    # variation"). Kept as its own constant rather than importing LossJitterTracker's --
+    # same value, deliberately not coupled across these two otherwise-independent modules.
+    SIGMA_CAP = 3.0
+
+    @property
+    def traffic_growth_score(self) -> float:
+        """
+        Normalized [0.0, 1.0] "abnormal traffic growth" score: splits tx_mbps_window into
+        an earlier baseline half and a later recent half, then scores how many baseline
+        standard deviations the recent half's mean has shifted upward (see SIGMA_CAP) --
+        not a fixed relative-growth ratio, and scale-free by construction (the shift is
+        measured in units of the link's own baseline variability, not a hand-picked Mbps or
+        percentage cutoff). Floored at 0 (only growth counts, not decline). Returns
+        0.0 with fewer than 2 samples in either half.
+
+        When the baseline half is perfectly flat (std ~= 0) the z-score is
+        undefined, so the score falls back to the fraction of the recent half that
+        sits above the baseline -- a single spike poll scores ~1/len(recent), a
+        sustained ramp still scores near 1.0. Same single-poll false-positive guard
+        as LossJitterTracker.get_abnormal_loss_score.
+        """
+        window = list(self.tx_mbps_window)
+        half = len(window) // 2
+        if half < 2:
+            return 0.0
+        baseline, recent = window[:half], window[half:]
+        baseline_mean = sum(baseline) / len(baseline)
+        baseline_variance = sum((v - baseline_mean) ** 2 for v in baseline) / (len(baseline) - 1)
+        baseline_std = baseline_variance ** 0.5
+        recent_mean = sum(recent) / len(recent)
+        shift = recent_mean - baseline_mean
+        if shift <= 0:
+            return 0.0
+        if baseline_std < 1e-9:
+            above = sum(1 for v in recent if v > baseline_mean + 1e-9)
+            return above / len(recent)
+        z = shift / baseline_std
+        return min(z / self.SIGMA_CAP, 1.0)
+
     @property
     def current_rx_mbps(self) -> Optional[float]:
         return self.rx_mbps_window[-1] if self.rx_mbps_window else None

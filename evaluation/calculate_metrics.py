@@ -95,8 +95,45 @@ class MetricsCalculator:
             rows.append(output)
         return rows
 
-    @staticmethod
-    def _ci95(values: Sequence[float]) -> float:
-        if len(values) < 2:
+    # Two-tailed 95% t-distribution critical values, keyed by degrees of
+    # freedom (n-1). 1.96 (the normal approximation) is only valid as
+    # n -> infinity; at the small trial counts this project actually uses
+    # (pilot_experiments.py's default repeat=3, i.e. df=2) it understates
+    # the interval by ~2.2x. scipy.stats.t.ppf would compute this exactly,
+    # but scipy isn't installed in this environment (see requirements.txt's
+    # own note that every other stats method here is hand-rolled for the
+    # same reason) -- a table covering realistic repeat counts, falling
+    # back to the normal approximation once df is large enough that the
+    # two agree to 3 decimal places, avoids adding a runtime dependency.
+    _T_CRITICAL_95: Dict[int, float] = {
+        1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571,
+        6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228,
+        15: 2.131, 20: 2.086, 30: 2.042, 40: 2.021, 60: 2.000, 120: 1.980,
+    }
+
+    @classmethod
+    def _t_critical_95(cls, df: int) -> float:
+        if df in cls._T_CRITICAL_95:
+            return cls._T_CRITICAL_95[df]
+        if df < 1:
+            return cls._T_CRITICAL_95[1]
+        if df > 120:
+            return 1.96
+        # Between table entries: linear-interpolate on the nearest pair
+        # rather than snapping to one side -- the curve is smooth and
+        # monotonically decreasing here, so this stays within ~0.01 of the
+        # true value anywhere it matters (small df, where the gap to 1.96
+        # is largest).
+        known = sorted(cls._T_CRITICAL_95)
+        lower = max(k for k in known if k < df)
+        upper = min(k for k in known if k > df)
+        frac = (df - lower) / (upper - lower)
+        return cls._T_CRITICAL_95[lower] + frac * (cls._T_CRITICAL_95[upper] - cls._T_CRITICAL_95[lower])
+
+    @classmethod
+    def _ci95(cls, values: Sequence[float]) -> float:
+        n = len(values)
+        if n < 2:
             return 0.0
-        return 1.96 * statistics.stdev(values) / math.sqrt(len(values))
+        t_critical = cls._t_critical_95(n - 1)
+        return t_critical * statistics.stdev(values) / math.sqrt(n)

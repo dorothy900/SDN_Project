@@ -68,10 +68,8 @@ class FlowInstaller:
 
     def install_path(self, path: List[str]) -> Dict[str, List[str]]:
         """
-        Replace previously installed rules with the new path rules.
-
-        This mirrors the safe-replace behavior requested for Week 3 without
-        requiring a live OVS instance during local verification.
+        Replace previously installed rules with the new path rules,
+        without requiring a live OVS instance for local verification.
         """
         rules = self.build_flow_rules(path)
         grouped: Dict[str, List[str]] = {}

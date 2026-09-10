@@ -60,6 +60,28 @@ class LinkChurnTracker:
             return 0.0
         return min(len(times) / self.saturation_count, 1.0)
 
+    def has_changed_recently(self, link_id: str, within_seconds: float, now: Optional[float] = None) -> bool:
+        """
+        True if this link's most recently recorded change happened within
+        the last `within_seconds`. Lets DelayJitterTracker exclude a link's
+        own post-switch settle window from its rolling jitter stats (see
+        NetworkState.update_link_statistics) -- a switch event itself can
+        cause a real, transient delay blip that has nothing to do with
+        steady-state jitter, and would otherwise let delta (control-plane
+        churn) and zeta (data-plane jitter) partly double-count the same
+        underlying event.
+
+        Deliberately non-mutating (unlike get_churn_score, which evicts
+        stale entries as a side effect) -- just peeks at the latest
+        timestamp, since `within_seconds` here is typically much shorter
+        than `window_seconds` and doesn't need the same eviction bookkeeping.
+        """
+        times = self._change_times.get(link_id)
+        if not times:
+            return False
+        ts = now if now is not None else time.time()
+        return (ts - times[-1]) < within_seconds
+
     def reset(self) -> None:
         """Clear all tracked history (mainly for test isolation)."""
         self._change_times.clear()

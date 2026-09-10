@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from experiments.stability import StabilityValidation
+from experiments.validation.stability import StabilityValidation
 
 
 def test_stability_integration() -> None:
@@ -29,7 +29,6 @@ def test_stability_integration() -> None:
         output_dir / "priority_policy_test.csv",
         output_dir / "stability_integration_trace.csv",
         output_dir / "stability_integration_report.md",
-        output_dir / "week5_wrapup_notes.md",
     ]
     for path in expected_files:
         assert path.exists(), "Missing expected Stage 5 output: %s" % path

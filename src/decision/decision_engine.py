@@ -1,6 +1,30 @@
 #!/usr/bin/env python3
 """
-Decision Engine - Coordinate stability-aware rerouting decisions.
+Decision Engine - the "Proposed" algorithm's control point: given a
+congestion, failure, or resilience trigger on some link, decide whether a
+flow actually reroutes, and to where.
+
+It owns no telemetry and no graph of its own -- it reads NetworkState and
+asks PathCost/GraphBuilder for candidate paths -- and layers the stability
+mechanisms this dissertation contributes on top of a plain shortest-path
+recompute:
+
+  * threshold + hysteresis (enter/release) + hold-down  -- when a link
+    counts as congested at all;
+  * persistence (leaky-bucket) + rolling change budget   -- damp reaction
+    to transient or bursty congestion;
+  * churn-adaptive minimum-improvement gate              -- a reroute must
+    clear a cost margin that grows with the candidate links' recent churn;
+  * emergency bypass for real link failures, and a recovery-window-
+    protected switch-back once a failed link returns;
+  * offered-load self-influence correction               -- price a
+    candidate path net of the moving flow's own contribution;
+  * priority-aware policy                                -- high-priority
+    traffic classes trigger earlier and skip persistence.
+
+evaluate_resilience_avoidance() is the separate resilience layer's hook
+(see resilience_gate.py): it moves a flow off a link the gate has latched
+as flapping / abnormally-lossy even when nothing above would fire.
 """
 
 from __future__ import annotations
@@ -33,6 +57,16 @@ class DecisionEngine:
     traffic policy (high-priority classes trigger earlier and skip persistence).
     """
 
+    # A recovery-window switch-back that is eligible on timing but still
+    # refused because the original path crosses a resilience-gated link keeps
+    # its watch open (instead of consuming it) so the flow returns once the
+    # gate releases, rather than being stranded on the detour. The gate's own
+    # RFC-2439 flap damping can legitimately hold a link for ~1.5-2 min after
+    # a bad burst stops (suppress plateau + decay to the reuse threshold), so
+    # the watch has to outlive that; past this absolute bound it is dropped as
+    # a safety valve against a permanent leak.
+    RESILIENCE_BLOCKED_SWITCHBACK_MAX_SECONDS = 300.0
+
     def __init__(
         self,
         network_state: NetworkState,
@@ -61,7 +95,19 @@ class DecisionEngine:
             burst_allowance=budget_config.get('burst_allowance', 3)
         )
 
-        self.path_cost = PathCost(network_state, config.get('path_cost_weights', {}))
+        resilience_config = config.get('resilience_avoidance', {})
+        resilience_enabled = resilience_config.get('enabled', False)
+        resilience_avoid_threshold = (
+            float(resilience_config['avoid_threshold']) if resilience_enabled else None
+        )
+        resilience_persist_seconds = (
+            float(resilience_config.get('persist_seconds', 0.0)) if resilience_enabled else 0.0
+        )
+        self.path_cost = PathCost(
+            network_state, config.get('path_cost_weights', {}),
+            resilience_avoid_threshold=resilience_avoid_threshold,
+            resilience_persist_seconds=resilience_persist_seconds,
+        )
 
         self.min_improvement = config.get('minimum_improvement', {})
         self.hold_down = config.get('hold_down', {})
@@ -106,6 +152,22 @@ class DecisionEngine:
 
         return actions
 
+    def leak_persistence(self, link_id: str, metric: str = "utilization") -> None:
+        """
+        Leaky-bucket persistence update: call this whenever a sample
+        confirms the condition has genuinely cleared (utilization back
+        at/under threshold). Forgives exactly one accumulated violation --
+        see PersistenceChecker.leak_window()'s docstring for the rationale.
+
+        evaluate_service_congestion() (checks its own threshold internally)
+        calls this on its below-threshold path automatically. Callers that
+        check a threshold themselves before calling evaluate_pair()/
+        evaluate_failure()/evaluate_recovery_switchback() must call this on
+        their own "not violating" branch -- see ProposedDriver.step() in
+        experiments/simulation_common.py for the reference integration.
+        """
+        self.persistence_checker.leak_window(link_id, metric)
+
     def evaluate_pair(
         self,
         src: str,
@@ -114,15 +176,30 @@ class DecisionEngine:
         candidate_path: List[str],
         violation,
         now: Optional[float] = None,
+        offered_load_mbps: Optional[float] = None,
+        service_type: Optional[str] = None,
     ) -> Optional[dict]:
         """
         Evaluate an ordinary (non-emergency) congestion reroute.
 
         Applies, in order: hysteresis (enter/release state), hold-down,
         persistence, minimum-improvement path cost, and the change budget.
+
+        offered_load_mbps: this flow's own raw bandwidth demand in Mbps --
+        forwarded to PathCost so candidate_path is costed as if this flow
+        were already routed across it (current_path already reflects that
+        for real, since the flow is actually there). See PathCost.
+        calculate_path_cost's docstring.
+
+        service_type: optional traffic class for this flow. When given and
+        config/policies.yaml marks it reroute_immediate (e.g. VoIP/Video),
+        persistence is skipped entirely. None (default) preserves prior
+        behavior exactly.
         """
+        skip_persistence = bool(service_type) and self.traffic_policy.should_reroute_immediately(service_type)
         return self._evaluate_congestion(
-            src, dst, current_path, candidate_path, violation, skip_persistence=False, now=now
+            src, dst, current_path, candidate_path, violation, skip_persistence=skip_persistence, now=now,
+            offered_load_mbps=offered_load_mbps,
         )
 
     def evaluate_service_congestion(
@@ -135,6 +212,7 @@ class DecisionEngine:
         utilization: float,
         service_type: str,
         now: Optional[float] = None,
+        offered_load_mbps: Optional[float] = None,
     ) -> Optional[dict]:
         """
         Evaluate a congestion reroute using the traffic-class-specific policy
@@ -147,6 +225,7 @@ class DecisionEngine:
         base_threshold = float(self.threshold_detector.thresholds["utilization"])
         effective_threshold = self.traffic_policy.get_effective_trigger_threshold(base_threshold, service_type)
         if utilization <= effective_threshold:
+            self.leak_persistence(link_id)
             self.logger.log_no_action(
                 "%s utilization on %s below its effective threshold (%.4f <= %.4f)"
                 % (service_type, link_id, utilization, effective_threshold)
@@ -162,7 +241,8 @@ class DecisionEngine:
         )
         skip_persistence = self.traffic_policy.should_reroute_immediately(service_type)
         return self._evaluate_congestion(
-            src, dst, current_path, candidate_path, violation, skip_persistence=skip_persistence, now=now
+            src, dst, current_path, candidate_path, violation, skip_persistence=skip_persistence, now=now,
+            offered_load_mbps=offered_load_mbps,
         )
 
     def _evaluate_congestion(
@@ -174,6 +254,7 @@ class DecisionEngine:
         violation,
         skip_persistence: bool,
         now: Optional[float] = None,
+        offered_load_mbps: Optional[float] = None,
     ) -> Optional[dict]:
         """Shared hysteresis/hold-down/persistence/budget gating for a congestion reroute."""
         pair = (src, dst)
@@ -197,11 +278,10 @@ class DecisionEngine:
         if skip_persistence:
             stability_used.append("priority_policy_immediate")
         else:
-            persistence_result = self.persistence_checker.evaluate_sample(
+            persistence_result = self.persistence_checker.record_violation_sample(
                 link_id=link_id,
                 metric=metric,
                 value=float(violation.value),
-                is_violation=True,
             )
             if not persistence_result["accepted"]:
                 self.logger.log_no_action(
@@ -228,6 +308,7 @@ class DecisionEngine:
             stability_used=stability_used,
             emergency=False,
             now=now,
+            offered_load_mbps=offered_load_mbps,
         )
         if action is not None:
             self.change_budget.record_path_change()
@@ -243,6 +324,7 @@ class DecisionEngine:
         link_id: str,
         candidate_path: Optional[List[str]],
         now: Optional[float] = None,
+        offered_load_mbps: Optional[float] = None,
     ) -> Optional[dict]:
         """
         Evaluate an emergency reroute after a link on the active path fails.
@@ -273,6 +355,70 @@ class DecisionEngine:
             stability_used=["failure_handler", "emergency_bypass"],
             emergency=True,
             now=now,
+            offered_load_mbps=offered_load_mbps,
+        )
+
+    def evaluate_resilience_avoidance(
+        self,
+        src: str,
+        dst: str,
+        current_path: List[str],
+        now: Optional[float] = None,
+    ) -> Optional[dict]:
+        """
+        Move a flow off a link the resilience gate has latched as anomalous
+        (flapping or abnormal loss), even when that link is not congested and
+        nothing has failed -- the case an ordinary threshold-driven reroute
+        never sees, and the reason the gate needs its own trigger to work in a
+        live deployment.
+
+        Only fires when the current path actually uses a gated link and
+        find_best_path (which is resilience_effective_graph, so it already
+        encodes the gate's suppress/reuse hysteresis, persistence delay, and
+        the P4 bounded-detour give-up) offers an alternative that itself uses
+        no gated link.
+
+        Treated as an emergency reroute with NO offered-load correction: a
+        gated link is a soft failure, so the intent is "get off it", not
+        "reroute only if it's clearly worth it net of our own load" -- the
+        gate's own timers are the damping, and the P4 cap already refuses a
+        pathologically long detour. The offered-load correction is a
+        safety-first check for marginal *congestion* switch-backs; applying it
+        here just strands the flow on a bad link behind a longer safe detour.
+        """
+        gb = self.path_cost.graph_builder
+        if gb._resilience_gate is None or len(current_path) < 2:
+            return None
+        # Tick the gate: it only advances its persistence/hysteresis state
+        # inside a graph build, and .step() only builds a graph when it is
+        # already considering a congestion reroute -- so without this a
+        # purely-degrading (uncongested) link would never latch, and this
+        # check would be a permanent no-op. Called every step; cheap and
+        # idempotent for an unchanged score at a fixed `now`.
+        gb.build_weighted_graph(now=now)
+        current_links = {self._link_id(u, v) for u, v in zip(current_path, current_path[1:])}
+        if not any(gb._resilience_gate.is_avoided(lid) for lid in current_links):
+            return None
+
+        candidate = self.path_cost.find_best_path(src, dst, now=now)
+        if not candidate or candidate == current_path:
+            return None
+        candidate_links = {self._link_id(u, v) for u, v in zip(candidate, candidate[1:])}
+        if any(gb._resilience_gate.is_avoided(lid) for lid in candidate_links):
+            return None  # the alternative is no better resilience-wise -- leave it
+
+        pair = (src, dst)
+        self.current_paths[pair] = list(current_path)
+        return self._execute_reroute(
+            pair=pair,
+            current_path=current_path,
+            candidate_path=candidate,
+            reason="resilience:avoid_gated_link",
+            affected_links=sorted(current_links - candidate_links),
+            stability_used=["resilience_gate"],
+            emergency=True,
+            now=now,
+            offered_load_mbps=None,
         )
 
     def begin_recovery_watch(
@@ -303,14 +449,48 @@ class DecisionEngine:
         dst: str,
         current_path: List[str],
         now: Optional[float] = None,
+        offered_load_mbps: Optional[float] = None,
     ) -> Optional[dict]:
-        """Switch back to the original path once the recovery window confirms stability."""
+        """
+        Switch back to the original path once the recovery window confirms
+        stability.
+
+        Applies the offered-load self-influence correction (via
+        offered_load_mbps -> PathCost) to this comparison, a deliberate
+        safety-first choice: a real Mininet test showed that without it, a
+        genuine background-traffic increase on the original path's other
+        edges during the outage can make an already-worse path still look
+        acceptable, and the network switches back into it. The trade-off
+        this accepts: a small, genuine improvement can also get blocked
+        when background did *not* actually change, since the correction
+        can't distinguish the two cases from cost alone -- both look like a
+        shrunk margin.
+        """
         pair = (src, dst)
         link_id = self.recovery_links.get(pair)
         if not link_id or not self.recovery_manager.is_eligible_for_switchback(link_id, now=now):
             return None
 
         original_path = self.original_paths.get(pair)
+
+        # If the original path still crosses a link the resilience gate has
+        # latched, the switch-back is correctly refused for now -- but the
+        # watch is kept (up to RESILIENCE_BLOCKED_SWITCHBACK_MAX_SECONDS) so a
+        # later step retries once the gate releases, rather than consuming the
+        # watch here and stranding the flow on the detour permanently.
+        gb = self.path_cost.graph_builder
+        if original_path and gb._resilience_gate is not None:
+            gb.build_weighted_graph(now=now)  # tick the gate (see evaluate_resilience_avoidance)
+            original_links = {self._link_id(u, v) for u, v in zip(original_path, original_path[1:])}
+            if any(gb._resilience_gate.is_avoided(lid) for lid in original_links):
+                age = self.recovery_manager.get_recovery_age(link_id, now=now) or 0.0
+                if age <= self.RESILIENCE_BLOCKED_SWITCHBACK_MAX_SECONDS:
+                    return None  # keep watching -- gate may still release
+                # gate never released within the bounded watch: give up on it
+                self.recovery_manager.complete_recovery(link_id)
+                self.recovery_links.pop(pair, None)
+                return None
+
         self.recovery_manager.complete_recovery(link_id)
         self.recovery_links.pop(pair, None)
         if not original_path or original_path == current_path:
@@ -325,7 +505,38 @@ class DecisionEngine:
             stability_used=["recovery_manager"],
             emergency=True,
             now=now,
+            offered_load_mbps=offered_load_mbps,
+            restore_canonical=True,
         )
+
+    def _churn_adaptive_min_improvement(self, affected_links: List[str], now: Optional[float] = None) -> Tuple[float, float]:
+        """
+        Scale the minimum-improvement thresholds by how much recent churn
+        the affected link(s) have seen: churn_score=0 (no recent
+        instability) uses the permissive *_low_churn floor; churn_score=1.0
+        (already flapping) uses the original fixed ceiling unchanged, so an
+        already-unstable link is never treated more permissively. Linear
+        interpolation in between. Uses the max churn_score across
+        affected_links (most cautious link governs), or the ceiling if
+        there are no affected links to check.
+
+        Without this, a genuinely small-but-real improvement on a link with
+        zero churn history (no flapping risk to protect against) would be
+        rejected by the same flat threshold meant to guard against
+        borderline, potentially-oscillating candidates.
+        """
+        ceiling_abs = self.min_improvement.get("absolute_cost_reduction", 0.1)
+        ceiling_rel = self.min_improvement.get("relative_cost_reduction", 0.15)
+        floor_abs = self.min_improvement.get("absolute_cost_reduction_low_churn", ceiling_abs)
+        floor_rel = self.min_improvement.get("relative_cost_reduction_low_churn", ceiling_rel)
+
+        if not affected_links:
+            return ceiling_abs, ceiling_rel
+        churn = max(self.network_state.get_link_churn_score(lid, now=now) for lid in affected_links)
+        churn = min(max(churn, 0.0), 1.0)
+        min_abs = floor_abs + churn * (ceiling_abs - floor_abs)
+        min_rel = floor_rel + churn * (ceiling_rel - floor_rel)
+        return min_abs, min_rel
 
     def _execute_reroute(
         self,
@@ -337,15 +548,37 @@ class DecisionEngine:
         stability_used: List[str],
         emergency: bool,
         now: Optional[float] = None,
+        offered_load_mbps: Optional[float] = None,
+        restore_canonical: bool = False,
     ) -> Optional[dict]:
-        """Shared cost-check, logging, and installation logic for any reroute."""
+        """Shared cost-check, logging, and installation logic for any reroute.
+
+        restore_canonical marks a switch-back to a path the flow was
+        *deliberately forced off* (recovery-window switch-back): the target
+        was the intended optimum and the current path is an imposed detour,
+        so it is accepted as long as the target is no worse than the detour,
+        not only when it is strictly better. Without this a detour that ends
+        up exactly tied with the original (common when neither is congested)
+        would strand the flow on the detour permanently.
+        """
+        min_abs, min_rel = (0.0, 0.0) if emergency else self._churn_adaptive_min_improvement(affected_links, now=now)
+        # No separate threshold offset for the offered-load correction here:
+        # PathCost.calculate_path_cost already prices it correctly per-edge
+        # (real capacity, shared edges excluded), so compare_paths below
+        # returns an undistorted cost -- offsetting the threshold on top
+        # would double-discount the same correction.
         comparison = self.path_cost.compare_paths(
             current_path,
             candidate_path,
-            min_abs_reduction=0.0 if emergency else self.min_improvement.get("absolute_cost_reduction", 0.1),
-            min_rel_reduction=0.0 if emergency else self.min_improvement.get("relative_cost_reduction", 0.15),
+            min_abs_reduction=min_abs,
+            min_rel_reduction=min_rel,
+            now=now,
+            offered_load_mbps=offered_load_mbps,
         )
-        if not comparison["accepted"]:
+        accepted = comparison["accepted"] or (
+            restore_canonical and comparison["new_cost"] <= comparison["old_cost"]
+        )
+        if not accepted:
             self.logger.log_no_improvement(
                 current_path,
                 candidate_path,

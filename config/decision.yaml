@@ -15,8 +15,24 @@ hysteresis:
   release_threshold: 0.65
 
 minimum_improvement:
+  # Churn-adaptive threshold (added 2026-08-20): the *_cost_reduction values
+  # below are now the ceiling, used only when the affected link(s) have a
+  # saturated recent churn_score (1.0 -- already flapping, stay cautious,
+  # identical to this project's original fixed-threshold behavior). The
+  # *_cost_reduction_low_churn values are the floor, used when churn_score
+  # is 0 (no recent instability -- a real, if modest, improvement shouldn't
+  # be blocked just because the fixed 0.15 threshold happens to be a bit
+  # too strict for this specific case). Linearly interpolated by churn_score
+  # in between. See DecisionEngine._execute_reroute() and
+  # compliance_check.md's "Churn-adaptive minimum-improvement threshold"
+  # section for the real congestion.py scenario that motivated this (a
+  # genuine ~10% cost improvement was blocked by the flat 0.15 threshold
+  # combined with the offered-load self-influence correction, on a link
+  # with zero churn history).
   absolute_cost_reduction: 0.1
   relative_cost_reduction: 0.15
+  absolute_cost_reduction_low_churn: 0.03
+  relative_cost_reduction_low_churn: 0.05
 
 change_budget:
   max_updates_per_minute: 10
@@ -30,9 +46,76 @@ hold_down:
 recovery:
   window_seconds: 5
 
+resilience_avoidance:
+  # Avoidance for links with a real resilience anomaly -- flapping or
+  # sustained abnormal loss (get_resilience_score = max of those two; traffic
+  # growth was tried and dropped -- a link that is just getting busier is
+  # what alpha*utilisation already prices). Enabled by default (2026-09-01); none
+  # of the four generalization scenarios' links ever accumulate a nonzero
+  # resilience_score, so every one of them produces byte-identical output
+  # enabled vs disabled -- only experiments/resilience_avoidance.py (and a
+  # real deployment) exercises it.
+  #
+  # Applied as a large *finite additive* cost penalty in GraphBuilder
+  # (RESILIENCE_AVOID_PENALTY), NOT a structural edge removal: an anomalous
+  # link is routed around whenever any alternative exists, but a link with
+  # no alternative still carries traffic rather than black-holing the demand.
+  # The avoid decision is latched through ResilienceGate's suppress/reuse
+  # hysteresis (reuse = 0.375 * avoid_threshold, RFC 2439's own ratio) so a
+  # score hovering near avoid_threshold can't toggle a link in and out of
+  # avoidance on successive rebuilds -- which would re-create the very path
+  # churn this layer exists to remove.
+  #
+  # Both signals are grounded, not hand-picked: flapping follows RFC 2439's
+  # BGP route flap damping shape (exponential-decay penalty + suppress/reuse
+  # hysteresis, rescaled from BGP's minutes-scale defaults to this project's
+  # seconds-scale stability timers -- see LinkFlapTracker's docstring);
+  # abnormal loss is the max of a 3-sigma shift term (Shewhart-control-chart
+  # convention, standard in network anomaly detection) and an absolute-level
+  # term (a loss residual sustained at LOSS_LEVEL_CAP=0.05 = 5pp beyond what
+  # load predicts reads as maximally abnormal -- TCP/SLA grounded; see
+  # LossJitterTracker.get_abnormal_loss_score). avoid_threshold itself (how much
+  # of that already-principled [0,1] score counts as "avoid this link") is
+  # now also data-driven rather than hand-picked: experiments/resilience_
+  # sensitivity.py runs a ROC / Youden's-J search (standard threshold-
+  # selection methodology for a labeled detector score, e.g. PMC2749250;
+  # mirrors how SDN link-failure literature separates failure-free vs
+  # broken parameter distributions before picking a trip point, e.g. IEEE
+  # 9531440) over randomized synthetic instances of "genuinely flapping" vs
+  # "one legitimate transition". At half_life_seconds=20 (LinkFlapTracker's
+  # own default), Youden's J is maximized (J=1.0, TPR=1.0, FPR=0.0 -- perfect
+  # separation) across threshold in [0.50, 0.64]; 0.57 is that plateau's
+  # midpoint, chosen over either edge for robustness to model misspecification
+  # rather than sitting exactly on the boundary. Still synthetic ground
+  # truth, not independently validated against real hardware traffic -- see
+  # resilience_sensitivity.py's own module docstring for that same caveat.
+  enabled: true
+  avoid_threshold: 0.57
+  # Extra safeguard: the score must stay above avoid_threshold *continuously*
+  # for this long before the gate latches. Default 0 (latch as soon as the
+  # score crosses) -- the single-poll false-positive case it would guard
+  # against is already handled at the signal level (LossJitterTracker /
+  # LinkHistory fall back to "fraction of the recent half above baseline"
+  # when the baseline has no variance, so one garbage poll scores ~1/N not
+  # 1.0; and a constant congestion_model calibration offset produces no
+  # *shift* at all, so the shift detectors never fire on it). Set to a few
+  # seconds (~= a couple of monitoring polls, topology.yaml
+  # interval_seconds: 2) in environments with known-flaky telemetry, at the
+  # cost of that much added avoidance latency. Release always goes through
+  # the reuse-band hysteresis, never this delay.
+  persist_seconds: 0.0
+
 path_cost_weights:
   alpha: 0.4
   beta: 0.3
   gamma: 0.2
   delta: 0.05    # link instability/churn weight (recently-changed links cost more)
   epsilon: 0.05
+  zeta: 0.05     # delay-residual jitter weight (recently-volatile links cost more)
+  eta: 0.05      # loss-residual jitter weight (same idea, added 2026-08-19 after
+                 # Breusch-Pagan confirmed loss_residual is heteroscedastic too)
+                 # zeta/eta starting defaults matching delta/epsilon, not yet tuned
+                 # -- see compliance_check.md 2026-08-19 and pending task notes.
+                 # (A PCA-based composite merging alpha/beta/gamma/delta into one
+                 # term was tried and reverted the same day -- see
+                 # compliance_check.md's "Composite congestion indicator" section.)

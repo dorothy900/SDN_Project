@@ -1,6 +1,18 @@
 # SDN Traffic Engineering Project Dependencies
+# (the .venv env -- experiments, tests, figures; RYU deps are in requirements-ryu.txt)
 networkx>=3.0
 matplotlib>=3.7
 numpy>=1.24
 pyyaml>=6.0
 requests>=2.31
+pytest>=7.0    # test suite: `pytest tests/ -v`
+scipy>=1.18  # experiments/cost_formula/weight_search_comparison.py's DIRECT comparison
+             # (scipy.optimize.direct) -- the project's only scipy usage;
+             # every other stats/optimization method (Spearman, dCor,
+             # permutation tests, Mann-Whitney, GP+EI Bayesian optimization,
+             # simulated annealing) is deliberately hand-rolled in pure
+             # numpy elsewhere, since scipy wasn't available when those were
+             # written. Added 2026-08-19 specifically because DIRECT is a
+             # well-established, non-trivial-to-reimplement-correctly
+             # algorithm and the user opted for the battle-tested
+             # implementation over a from-scratch one for this one method.

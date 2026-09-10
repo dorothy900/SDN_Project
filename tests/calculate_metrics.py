@@ -93,10 +93,14 @@ def test_aggregate_repeated_runs_mean_and_ci95():
     assert row["algorithm"] == "proposed"
     assert row["trials"] == 2
     assert row["avg_delay_ms_mean"] == 11.0
-    # For exactly 2 samples, sample stdev = |x1-x2|/sqrt(2), so ci95 reduces to
-    # 1.96 * |x1-x2|/2 = 1.96 * |10.0-12.0|/2 = 1.96 exactly -- not a value
-    # copied from a prior run's output.
-    assert row["avg_delay_ms_ci95"] == 1.96
+    # For exactly 2 samples (df=1), sample stdev = |x1-x2|/sqrt(2) = 1.0/sample
+    # after dividing by sqrt(n)=sqrt(2) again, so ci95 = t_critical(df=1) * 1.0.
+    # t_critical(df=1) for a 95% two-tailed interval is 12.706, not the normal
+    # approximation's 1.96 -- see MetricsCalculator._T_CRITICAL_95 (fixed
+    # 2026-08-24: the previous fixed-1.96 formula understated every small-n
+    # CI in this project by up to ~2.2x; see docs/compliance_check.md/this
+    # session's scenario design audit, finding F2).
+    assert row["avg_delay_ms_ci95"] == 12.706
     # A metric with zero spread across repeats has a zero-width interval.
     assert row["reroute_count_ci95"] == 0.0
 

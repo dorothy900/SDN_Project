@@ -86,10 +86,11 @@ class PersistenceChecker:
         is_violation: bool,
     ) -> Dict[str, object]:
         """
-        Process one sample and expose whether the violation is accepted.
-
-        This mirrors the Week 4 Day 2 validation method of comparing short spikes
-        versus sustained overload across a configurable number of samples.
+        Legacy strict-consecutive check (decision_engine_check.py, stability.py only): a
+        single non-violating sample clears the window outright. Production code does not
+        call this with is_violation=False -- see record_violation_sample() for the
+        accumulation path DecisionEngine actually uses, and leak_window() for how a
+        cleared condition is really forgiven there.
         """
         if not is_violation:
             self.clear_window(link_id, metric)
@@ -99,7 +100,15 @@ class PersistenceChecker:
                 "window_age": 0.0,
                 "reason": "below_threshold",
             }
+        return self.record_violation_sample(link_id, metric, value)
 
+    def record_violation_sample(self, link_id: str, metric: str, value: float) -> Dict[str, object]:
+        """
+        Accumulate one violating sample and report whether persistence has been satisfied.
+        This is the production accumulation path (DecisionEngine._evaluate_congestion calls
+        this directly, never evaluate_sample) -- a cleared condition is forgiven separately,
+        via leak_persistence()/leak_window(), not by anything in this method.
+        """
         accepted = self.record_violation(link_id, metric, value)
         sample_count = self.get_violation_count(link_id, metric)
         window_age = self.get_window_age(link_id, metric) or 0.0
@@ -114,6 +123,30 @@ class PersistenceChecker:
         """Clear tracking window for a condition."""
         key = (link_id, metric)
         if key in self.active_windows:
+            del self.active_windows[key]
+
+    def leak_window(self, link_id: str, metric: str) -> None:
+        """
+        Leaky-bucket persistence: one clean sample forgives exactly one
+        accumulated violation, rather than wiping the whole window
+        (too strict -- erases standing evidence of a chronic problem on one
+        isolated clean sample) or never decaying it (never catches up once
+        cleared, since only an actual reroute resets the window).
+
+        1:1 leak rate, no extra tunable. An isolated spike is still
+        forgotten within 1-2 clean samples. A link that violates more often
+        than it recovers nets upward over time and still trips persistence
+        eventually -- catching chronic-but-intermittent instability that
+        strict consecutive-only semantics can't see. A symmetric on/off
+        pattern nets to zero and correctly never trips: a 50/50 link isn't
+        chronically worse than tolerable, it's borderline by construction.
+        """
+        key = (link_id, metric)
+        window = self.active_windows.get(key)
+        if window is None or not window.violations:
+            return
+        window.violations.popleft()
+        if not window.violations:
             del self.active_windows[key]
 
     def record_reroute(self, link_id: str, metric: str):

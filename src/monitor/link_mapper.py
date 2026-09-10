@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Link Mapper - Map logical links to physical ports
-Week 2 Day 2: Maps ODL ports to link capacities and computes directional utilization
+Link Mapper - map logical links to physical ports, ODL ports to link
+capacities, and compute directional utilization.
 """
 from typing import Dict, Tuple, Optional
 

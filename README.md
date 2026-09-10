@@ -4,18 +4,18 @@ Resilient and Stability-Aware SDN Traffic Engineering Framework for Dynamic Netw
 
 ## Environment Requirements
 
-- Ubuntu 20.04+
-- Python 3.8+
-- Mininet
-- Open vSwitch
-- OpenDaylight (optional)
-- networkx, matplotlib, numpy, pyyaml, requests
+- Ubuntu 20.04+, Mininet, Open vSwitch
+- **Two virtualenvs** (RYU pins old eventlet/dnspython that cannot coexist
+  with the modern numpy/scipy/matplotlib stack the analysis uses):
 
-Install dependencies:
+  | venv | Python | for | install |
+  |---|---|---|---|
+  | `.venv` | 3.11+ | experiments, tests, figures (all `python3 ...` / `pytest` below) | `pip install -r requirements.txt` |
+  | `ryu-env` | 3.9 | only `ryu-manager` for the live controller (`scripts/ryu/`) | `python3.9 -m venv ryu-env && ryu-env/bin/pip install -r requirements-ryu.txt` |
 
-```bash
-pip install -r requirements.txt
-```
+  Neither venv is committed or part of the project source; recreate them
+  from the requirements files (and exclude both, plus `results/`, from any
+  archived copy).
 
 ## Quick Start
 
@@ -40,13 +40,12 @@ python3 experiment.py --stage 2
 #   - history_window_test.csv
 ```
 
-**Port/link statistics come from OVS directly, not from OpenDaylight.**
+**Port/link statistics come from OVS directly.**
 `StatisticsCollector.parse_ovs_port_stats()` (`src/monitor/statistics_collector.py`) queries
-`ovs-ofctl dump-ports` directly and is the complete, working path that feeds rate → utilization →
-`NetworkState` → path-cost-based routing. `ODLClient.get_port_statistics()`
-(`src/monitor/odl_client.py`) is an alternative, controller-mediated path to the same data that was
-never finished (it returns `[]` even on a successful response) and isn't called anywhere in the
-current pipeline — see the note at the top of `odl_client.py` for why it's left that way.
+`ovs-ofctl dump-ports` directly and feeds rate → utilization → `NetworkState` → path-cost-based
+routing. In the live deployment the RYU app (`scripts/ryu/stability_aware_te.py`) uses the
+same math on OpenFlow `OFPPortStatsReply` counters. An early OpenDaylight REST path was evaluated
+and dropped.
 
 ### 3. Baseline Routing (Stage 3)
 
@@ -100,7 +99,10 @@ python3 experiment.py --stage 6 --scenario all_plus_priority --repeat 5
 # -> results/pilot/scenario5/, folded into pilot_summary.csv / full_results_repeated.csv
 
 # Parameter sensitivity analysis (why the config/decision.yaml defaults are what they are)
-python3 -m experiments.sensitivity_analysis
+python3 -m experiments.cost_formula.sensitivity_analysis
+# resilience-layer evidence / ROC calibration
+python3 -m experiments.resilience.resilience_avoidance
+python3 -m experiments.resilience.resilience_sensitivity
 # -> results/pilot/sensitivity/{threshold_persistence_sweep,hold_down_sweep}.csv + sensitivity_report.md
 ```
 
@@ -109,71 +111,62 @@ python3 -m experiments.sensitivity_analysis
 ```
 sdn-dissertation/
  ├── README.md                      # This file
- ├── requirements.txt               # Python dependencies
+ ├── requirements.txt               # experiments / tests / figures deps  (.venv)
+ ├── requirements-ryu.txt           # RYU controller deps                 (ryu-env)
+ ├── experiment.py                  # main entry point: experiment.py --stage {1..6|full}
+ ├── topology.py                    # Mininet GEANT topology definition
  ├── .gitignore
  │
+ ├── docs/                          # compliance_check.md (technical log),
+ │                                  # methodology_narrative_outline.md
+ │
  ├── scripts/                       # Deployment & real-network verification
- │   ├── start_odl.sh
  │   ├── start_topology.sh
- │   ├── mininet_path_verification.py       # real Mininet/OVS rule push, full GeantTopology
- │   └── mininet_failure_recovery_demo.py   # real link failure -> reroute -> recovery
+ │   ├── ryu/                       # controller-side
+ │   │   ├── stability_aware_te.py          # the full src/ stack embedded in a RYU controller
+ │   │   └── *_probe.py                     # RYU/topology connectivity probes
+ │   └── mininet/                   # real Mininet/OVS checks (run with sudo)
+ │       ├── _common.py                     # shared net build / rule push / iperf helpers
+ │       ├── path_verification.py           # real rule push, full GeantTopology
+ │       ├── failure_recovery_demo.py       # real link failure -> reroute -> recovery
+ │       ├── abnormal_loss_check.py         # real tc-netem loss + iperf: the resilience loss signal
+ │       ├── link_flap_check.py             # real link flap + iperf: the resilience flap signal
+ │       └── *_check.py                     # cost-formula independence / calibration on real hardware
  │
- ├── config/                        # Configuration
- │   ├── topology.yaml
- │   ├── policies.yaml              # Traffic class priorities
- │   └── decision.yaml              # Rerouting parameters
+ ├── config/                        # decision.yaml (thresholds, weights, resilience gate),
+ │                                  # policies.yaml (traffic classes), topology.yaml
  │
- ├── topology.py                    # Mininet topology definition
+ ├── src/                           # Core source code (controller-agnostic algorithm)
+ │   ├── monitor/                   # telemetry + per-link trackers, fronted by NetworkState
+ │   │   ├── statistics_collector.py · network_state.py · topology_state.py · link_monitor.py
+ │   │   ├── history_store.py · link_churn_tracker.py · link_flap_tracker.py
+ │   │   ├── delay_jitter_tracker.py · loss_jitter_tracker.py · link_capacity.py · models.py
+ │   │   └── ...
+ │   ├── routing/                   # graph_builder.py (7-weight cost) · resilience_gate.py
+ │   │   ├── congestion_model.py · path is chosen here
+ │   │   └── static_shortest_path.py · dynamic_baseline.py · flow_installer.py
+ │   ├── decision/                  # decision_engine.py orchestrates the 6 stability gates
+ │   │   └── threshold_detector · persistence_checker · change_budget · path_cost · decision_logger
+ │   └── stability/                 # stability_manager · failure_handler · recovery_manager · traffic_policy
  │
- ├── src/                           # Core source code
- │   ├── monitor/                   # Network monitoring (Stages 1-2)
- │   │   ├── odl_client.py
- │   │   ├── statistics_collector.py
- │   │   ├── traffic_monitor.py
- │   │   ├── history_store.py
- │   │   ├── models.py
- │   │   ├── link_mapper.py
- │   │   ├── topology_state.py
- │   │   ├── link_monitor.py
- │   │   └── network_state.py
- │   │
- │   ├── routing/                   # Baseline routing (Stage 3)
- │   │   ├── graph_builder.py
- │   │   ├── static_shortest_path.py
- │   │   ├── dynamic_baseline.py
- │   │   └── flow_installer.py
- │   │
- │   ├── decision/                  # Decision engine (Stage 4)
- │   │   ├── threshold_detector.py
- │   │   ├── persistence_checker.py
- │   │   ├── path_cost.py
- │   │   ├── decision_engine.py
- │   │   ├── decision_logger.py
- │   │   └── change_budget.py
- │   │
- │   └── stability/                 # Stability mechanisms (Stage 5)
- │       ├── stability_manager.py
- │       ├── failure_handler.py
- │       ├── recovery_manager.py
- │       └── traffic_policy.py
+ ├── experiments/                   # offline simulation harness + all experiments
+ │   ├── common/                    # shared: simulation_common (static/dynamic/proposed driver
+ │   │                              #   harness), traffic_generator, sndlib_demand, independence_stats
+ │   ├── validation/                # Stage 1-6 drivers: does the real src/ code reproduce the
+ │   │                              #   design? (topology/network_state/decision_engine checks,
+ │   │                              #   baseline_comparison, stability, pilot_experiments)
+ │   ├── scenarios/                 # Experiments A-E + generalization / per-seed / per-sample variants
+ │   │   ├── {increasing_load,congestion,failure_recovery,stale_stats,priority_policy}.py
+ │   │   └── *_generalization.py    #   each scenario re-run over 23 real GEANT pairs x 5 seeds
+ │   ├── cost_formula/              # weight_search_comparison, pareto_weight_analysis,
+ │   │                              #   sensitivity_analysis, *_independence* (7-weight formula justification)
+ │   └── resilience/                # resilience_avoidance (evidence), resilience_sensitivity (ROC)
  │
- ├── experiments/                   # Experiment automation (Stages 1-6)
- │   ├── topology_check.py           # Stage 1
- │   ├── network_state_check.py      # Stage 2
- │   ├── baseline_comparison.py           # Stage 3
- │   ├── decision_engine_check.py    # Stage 4
- │   ├── stability.py          # Stage 5
- │   ├── pilot_experiments.py             # Stage 6 orchestrator
- │   ├── sensitivity_analysis.py          # parameter sweeps, opt-in (see Quick Start)
- │   ├── simulation_common.py             # shared static/dynamic/proposed harness for Stage 6
- │   ├── traffic_generator.py
- │   ├── increasing_load.py      # Experiment A
- │   ├── congestion.py           # Experiment B
- │   ├── failure_recovery.py     # Experiment C
- │   ├── stale_stats.py          # Experiment D
- │   └── priority_policy.py      # Experiment E, opt-in (see Quick Start)
+ ├── figures/                       # data-figure generation, run from the repo root:
+ │   ├── make_figures.py            #   python3 -m figures.make_figures  -> results/figures/*.png
+ │   └── make_topology_figure.py    #   the real GEANT topology map
  │
- ├── evaluation/                    # Result analysis ("analysis" -- there is no src/analysis/)
+ ├── evaluation/                    # result parsing / metrics
  │   ├── parse_results.py
  │   └── calculate_metrics.py
  │
@@ -193,15 +186,12 @@ sdn-dissertation/
  │   ├── stability_integration.py
  │   └── pilot_integration.py
  │
- ├── experiment.py              # Main entry point
- │
- └── results/                       # Output directory
-     ├── topology/
-     ├── network_state/
-     ├── baseline_comparison/
-     ├── decision_engine/
-     ├── stability/
-     └── pilot/
+ └── results/                       # ALL run output -- git-ignored, regenerated by the
+                                    # commands above. Not part of the source: may be a
+                                    # real directory or a symlink to one kept outside the
+                                    # project. Exclude it (and the two venvs) from any
+                                    # archived / submitted copy; the figure bundle and the
+                                    # reproduce commands are the deliverable, not this dir.
 ```
 
 ## Configuration

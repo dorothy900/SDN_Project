@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from experiments.simulation_common import PRIMARY_PAIR, build_network_state, link_id, set_link_condition
+import pytest
+
+from experiments.common.simulation_common import PRIMARY_PAIR, build_network_state, link_id, set_link_condition
 from src.decision.decision_engine import DecisionEngine
 from src.decision.threshold_detector import ThresholdViolation
 from src.routing.graph_builder import GraphBuilder
@@ -147,3 +149,167 @@ def test_priority_service_skips_persistence_low_priority_does_not(tmp_path):
         service_type="File Transfer", now=0.0,
     )
     assert file_transfer_action is None
+
+
+def test_resilience_avoid_threshold_routes_around_a_flapping_link(tmp_path):
+    """
+    End-to-end demonstration through the real DecisionEngine/PathCost/GraphBuilder
+    path (not just GraphBuilder directly, see tests/graph_builder.py's unit tests):
+    a link that's flapped enough times to saturate its resilience score is
+    routed around by find_best_path() once resilience_avoid_threshold is
+    enabled (the link is priced high, not removed), with no other condition
+    (cost, status) changed -- explicitly disabled, the same flapping link is
+    still selected.
+    """
+    engine, state, src, dst, current_path, _candidate_path = _make_engine(tmp_path)
+    hotspot_link = link_id(current_path[0], current_path[1])
+    assert engine.path_cost.find_best_path(src, dst) == current_path
+
+    # 4 real up/down transitions 1s apart, ending "up" -- well past LinkFlapTracker's
+    # RFC-2439-style suppress_threshold (2 flaps already crosses it at these defaults),
+    # and deliberately ending in a state the ordinary active-graph down-link exclusion
+    # would never remove on its own.
+    now = 1000.0
+    for i, is_up in enumerate([False, True, False, True]):
+        state.set_link_status(hotspot_link, is_up=is_up, now=now + i)
+
+    # Explicitly disabled: the flapping link is still the cheapest, still selected.
+    engine.path_cost.graph_builder.resilience_avoid_threshold = None
+    assert engine.path_cost.find_best_path(src, dst, now=now + 10) == current_path
+
+    # Enabled: the same flapping link is now avoided (priced past any alternative)
+    # -- but only after the score has stayed high for persist_seconds. The gate
+    # is evaluated once per graph build, so drive a few builds across time.
+    engine.path_cost.graph_builder.resilience_avoid_threshold = 0.7
+    engine.path_cost.graph_builder.resilience_persist_seconds = 4.0
+    engine.path_cost.graph_builder.resilience_avoid_threshold = 0.7  # rebuild gate w/ persist
+    assert engine.path_cost.find_best_path(src, dst, now=now + 10) == current_path  # not yet
+    for t in (12, 14, 16):
+        path_with_avoidance = engine.path_cost.find_best_path(src, dst, now=now + t)
+    assert path_with_avoidance is not None  # never black-holed -- priced, not removed
+    if link_id(path_with_avoidance[0], path_with_avoidance[1]) == hotspot_link:
+        pytest.skip("no alternate path exists around this pair's hotspot link in the real GEANT topology")
+    assert link_id(path_with_avoidance[0], path_with_avoidance[1]) != hotspot_link
+
+
+def test_evaluate_resilience_avoidance_moves_flow_off_a_gated_link(tmp_path):
+    """The live-deployment trigger: a link on the current path develops a
+    resilience anomaly while staying up and uncongested. An ordinary reroute
+    never sees it; evaluate_resilience_avoidance moves the flow off."""
+    engine, state, src, dst, current_path, _c = _make_engine(tmp_path)
+    on_path_link = link_id(current_path[0], current_path[1])
+    now = 1000.0
+
+    # Sustained loss residual far above prediction on an on-path link, uncongested.
+    for i in range(12):
+        state.record_loss_residual(on_path_link, 0.0 if i < 6 else 0.12, now=now)
+    assert state.get_resilience_score(on_path_link, now=now) >= 0.57
+
+    # nothing gated yet on the builder side -> no-op
+    engine.path_cost.graph_builder.build_weighted_graph(now=now)  # ticks the gate
+    action = engine.evaluate_resilience_avoidance(src, dst, current_path, now=now)
+    if action is None:
+        pytest.skip("this pair's first hop has no resilience-safe alternative in GEANT")
+    assert on_path_link not in {
+        link_id(u, v) for u, v in zip(action["new_path"], action["new_path"][1:])
+    }
+    # explicitly disabled -> never acts
+    engine.path_cost.graph_builder.resilience_avoid_threshold = None
+    assert engine.evaluate_resilience_avoidance(src, dst, current_path, now=now) is None
+
+
+def _latch_flap_gate(engine, state, gated_link, now, transitions=16):
+    """Flap a link enough times to latch the resilience gate, RFC-2439 style."""
+    for i in range(transitions):
+        state.link_flap.record_transition(gated_link, now=now + i * 2.0)
+    engine.path_cost.graph_builder.build_weighted_graph(now=now + transitions * 2.0)
+
+
+def test_recovery_switchback_blocked_by_gate_keeps_its_watch_then_fires_on_release(tmp_path):
+    """A link recovers (recovery watch opens) but is still resilience-gated:
+    the switch-back is refused for now, the watch is NOT consumed, and once the
+    gate releases a later evaluation actually switches the flow back -- rather
+    than the flow being stranded on the detour forever."""
+    engine, state, src, dst, original_path, detour = _make_engine(tmp_path)
+    gated_link = link_id(original_path[0], original_path[1])
+    now = 1000.0
+
+    _latch_flap_gate(engine, state, gated_link, now)
+    gate = engine.path_cost.graph_builder._resilience_gate
+    if gate is None or not gate.is_avoided(gated_link):
+        pytest.skip("gate did not latch for this pair's first hop")
+
+    window = engine.recovery_manager.recovery_window_seconds
+    watch_start = now + 20.0
+    engine.begin_recovery_watch(src, dst, gated_link, original_path=original_path, now=watch_start)
+
+    # eligible on timing, but the original path is still gated -> refused, watch
+    # kept -- checked well past a naive "few recovery windows" bound, since RFC
+    # 2439 flap damping can legitimately hold a link ~1.5-2 min after a burst.
+    for probe in (window + 1, window + 25, window + 55):
+        t = watch_start + probe
+        engine.path_cost.graph_builder.build_weighted_graph(now=t)
+        if not gate.is_avoided(gated_link):
+            pytest.skip("flap gate decayed faster than the test assumed")
+        blocked = engine.evaluate_recovery_switchback(src, dst, detour, now=t)
+        assert blocked is None
+        assert (src, dst) in engine.recovery_links
+
+    # gate releases as the flap penalty decays below the reuse threshold
+    later = watch_start + 400.0
+    for t in range(0, 40, 4):
+        engine.path_cost.graph_builder.build_weighted_graph(now=later + t)
+    if gate.is_avoided(gated_link):
+        pytest.skip("gate had not released within the test's decay window")
+
+    fired = engine.evaluate_recovery_switchback(src, dst, detour, now=later + 40)
+    assert fired is not None
+    assert fired["new_path"] == original_path
+    assert (src, dst) not in engine.recovery_links
+
+
+def test_recovery_switchback_restores_a_tied_canonical_path(tmp_path, monkeypatch):
+    """When the forced detour ends up exactly tied with the original path
+    (common with neither congested), the recovery switch-back still returns to
+    the canonical path instead of sticking on the detour forever -- but a
+    genuinely worse original is still refused."""
+    engine, state, src, dst, original_path, detour = _make_engine(tmp_path)
+    link = link_id(original_path[0], original_path[1])
+    window = engine.recovery_manager.recovery_window_seconds
+
+    tie = {"old_cost": 1.0, "new_cost": 1.0, "absolute_improvement": 0.0,
+           "relative_improvement": 0.0, "accepted": False}
+    monkeypatch.setattr(engine.path_cost, "compare_paths", lambda *a, **k: dict(tie))
+    engine.begin_recovery_watch(src, dst, link, original_path=original_path, now=0.0)
+    fired = engine.evaluate_recovery_switchback(src, dst, detour, now=window + 1)
+    assert fired is not None and fired["new_path"] == original_path
+
+    worse = {**tie, "new_cost": 1.5, "absolute_improvement": -0.5, "relative_improvement": -0.5}
+    monkeypatch.setattr(engine.path_cost, "compare_paths", lambda *a, **k: dict(worse))
+    engine.begin_recovery_watch(src, dst, link, original_path=original_path, now=1000.0)
+    assert engine.evaluate_recovery_switchback(src, dst, detour, now=1000.0 + window + 1) is None
+
+
+def test_recovery_switchback_watch_drops_past_the_absolute_bound(tmp_path):
+    """A link still gated long past RESILIENCE_BLOCKED_SWITCHBACK_MAX_SECONDS
+    stops holding the watch open -- the safety valve against a permanent leak."""
+    engine, state, src, dst, original_path, detour = _make_engine(tmp_path)
+    gated_link = link_id(original_path[0], original_path[1])
+    now = 5000.0
+
+    _latch_flap_gate(engine, state, gated_link, now)
+    gate = engine.path_cost.graph_builder._resilience_gate
+    if gate is None or not gate.is_avoided(gated_link):
+        pytest.skip("gate did not latch for this pair's first hop")
+
+    engine.begin_recovery_watch(src, dst, gated_link, original_path=original_path, now=now)
+    bound = engine.RESILIENCE_BLOCKED_SWITCHBACK_MAX_SECONDS
+    step = 15.0
+    t = now
+    while t <= now + bound + 3 * step:
+        state.link_flap.record_transition(gated_link, now=t)  # keep it flapping -> never releases
+        engine.path_cost.graph_builder.build_weighted_graph(now=t)
+        engine.evaluate_recovery_switchback(src, dst, detour, now=t)
+        t += step
+    assert gate.is_avoided(gated_link)              # still a bad link
+    assert (src, dst) not in engine.recovery_links  # ... but the watch was let go

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Statistics Collector - Gather data from OVS and save to CSV
-Week 2: Rate calculation, link utilization, and more
+Statistics Collector - gather port/link statistics from OVS, compute rates
+and utilization, and persist them to CSV.
 """
 
 import csv
@@ -125,8 +125,8 @@ class StatisticsCollector:
         sample_time: Optional[float] = None,
     ) -> List[PortStatistics]:
         """
-        Week 2 Day 1: Calculate RX/TX rates using actual time interval.
-        Uses real query time difference between samples, not fixed assumptions.
+        Calculate RX/TX rates using the actual time interval between
+        samples, not a fixed assumption.
         
         Args:
             stats_list: Current port statistics
@@ -189,8 +189,7 @@ class StatisticsCollector:
         port_stats: PortStatistics,
     ) -> float:
         """
-        Week 2 Day 2: Calculate link utilization for a port.
-        Utilization is max(rx_mbps, tx_mbps) / link capacity.
+        Calculate link utilization for a port: max(rx_mbps, tx_mbps) / link capacity.
         
         Args:
             port_stats: Port statistics with rates calculated
@@ -227,8 +226,8 @@ class StatisticsCollector:
         link_mapper,
     ) -> List[LinkStatistics]:
         """
-        Week 2 Day 2: Aggregate port statistics to link-level statistics.
-        Maps port stats to bidirectional link stats.
+        Aggregate port statistics to link-level statistics, mapping port
+        stats to bidirectional link stats.
         
         Args:
             port_stats_list: Port-level statistics
@@ -323,8 +322,8 @@ class StatisticsCollector:
         filename: str = "link_statistics.csv",
     ) -> None:
         """
-        Week 2: Save link-level statistics to CSV.
-        Includes timestamp, link_id, utilization, rates, status, delay, loss.
+        Save link-level statistics to CSV: timestamp, link_id, utilization,
+        rates, status, delay, loss.
         """
         filepath = self.output_dir / filename
         file_exists = filepath.exists()

@@ -1,6 +1,8 @@
 # Virtual Environment
 venv/
 env/
+.venv/
+ryu-env/
 
 # Python
 __pycache__/
@@ -24,16 +26,20 @@ wheels/
 .installed.cfg
 *.egg
 
-# Results and Logs
+# Results and Logs -- regenerated output; may be a directory or a symlink
+# to one kept outside the project (see README "Environment Requirements")
+results
 results/
 *.log
 *.csv
 *.swp
 *.swo
 
-# IDE
+# IDE / editor / tooling caches
 .vscode/
 .idea/
+.pytest_cache/
 
 # Temporary
 /tmp/
+*.zip

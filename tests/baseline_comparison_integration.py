@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from experiments.baseline_comparison import BaselineComparison
+from experiments.validation.baseline_comparison import BaselineComparison
 
 
 def test_baseline_comparison_integration() -> None:
@@ -28,7 +28,6 @@ def test_baseline_comparison_integration() -> None:
     dynamic_file = output_dir / "dynamic_baseline_events.csv"
     summary_file = output_dir / "baseline_summary.csv"
     repeated_file = output_dir / "baseline_summary_repeated.csv"
-    wrapup_file = output_dir / "week3_wrapup_notes.md"
 
     for path in [
         candidate_path_file,
@@ -37,7 +36,6 @@ def test_baseline_comparison_integration() -> None:
         dynamic_file,
         summary_file,
         repeated_file,
-        wrapup_file,
     ]:
         assert path.exists(), f"Missing expected Stage 3 output: {path}"
 
