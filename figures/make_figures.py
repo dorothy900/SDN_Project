@@ -57,7 +57,7 @@ def make_failure_recovery_figure(plt) -> None:
         patch.set_alpha(0.65)
     ax.set_ylabel("post-failure delay (ms)")
     ax.set_title("(a) Delay distribution, n=23 pairs/box")
-    ax.axvline(3.5, color="#c3c2b7", linestyle="--", linewidth=1)
+    ax.axvline(3.5, color="#c3c2b7", linestyle="--", linewidth=1)  # stable | unstable divider
 
     ax = axes[1]
     hops = [int(r["hops"]) for r in rows]
@@ -245,7 +245,7 @@ def make_congestion_figure(plt) -> None:
         patch.set_alpha(0.65)
     ax.set_ylabel("mean delay (ms), n=23 pairs/box")
     ax.set_title("(a) Delay distribution")
-    ax.axvline(3.5, color="#c3c2b7", linestyle="--", linewidth=1)
+    ax.axvline(3.5, color="#c3c2b7", linestyle="--", linewidth=1)  # transient | sustained divider
 
     # Panel (b): reroute rate per phase/algorithm -- dynamic and proposed match exactly
     # (both 1.0/1.0 across all 23 pairs, both phases) because flow-video-1's service_type
@@ -384,7 +384,12 @@ def make_resilience_figure(plt) -> None:
     production code, and the operating point this figure picks (avoid_threshold
     = 0.57) was then confirmed to fire correctly on real OVS + iperf:
     scripts/mininet/link_flap_check.py (4/4 PASS) and abnormal_loss_check.py
-    (10/10 PASS) -- annotated on panels (b) and (d).
+    (10/10 PASS) -- for the caption, not drawn on the panels.
+
+    Panels (b) and (d) mark the operating point (0.57), the earlier
+    hand-picked value (0.70), the Youden-optimal threshold, and the J=1.0
+    plateau as reference lines; panel (d)'s operating-point label carries
+    its TPR / FPR.
     """
     roc_rows = _load_csv(Path("results/resilience_sensitivity/roc.csv"))
     loss_roc = _load_csv(Path("results/resilience_sensitivity/roc_loss.csv"))
