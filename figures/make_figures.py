@@ -108,7 +108,7 @@ def make_failure_recovery_reroute_count_figure(plt) -> None:
     ax.set_xticks(list(x))
     ax.set_xticklabels(cases)
     ax.set_ylabel("mean reroute count per run, n=23 pairs")
-    ax.legend()
+    ax.legend(loc="upper left", framealpha=0.95)
 
     fig.tight_layout()
     _save(fig, "failure_recovery_reroute_count")
@@ -153,16 +153,16 @@ def make_stale_stats_figure(plt) -> None:
     detect_rate = [st.mean([float(r[f"{a}_detect_rate"]) for r in summary_rows]) * 100 for a in algos]
     x = range(len(algos))
     width = 0.35
-    b1 = ax.bar([i - width / 2 for i in x], fp_rate, width, label="false-positive rate (noise phase)", color="#e34948", alpha=0.85)
-    b2 = ax.bar([i + width / 2 for i in x], detect_rate, width, label="real-event detection rate", color="#1baf7a", alpha=0.85)
+    b1 = ax.bar([i - width / 2 for i in x], fp_rate, width, label="false-positive (noise phase)", color="#e34948", alpha=0.85)
+    b2 = ax.bar([i + width / 2 for i in x], detect_rate, width, label="real-event detection", color="#1baf7a", alpha=0.85)
     ax.bar_label(b1, fmt="%.0f%%")
     ax.bar_label(b2, fmt="%.0f%%")
     ax.set_xticks(list(x))
     ax.set_xticklabels(algos)
     ax.set_ylabel("% of 23 pairs x 5 seeds (n=115)")
     ax.set_title("(a) Robustness vs responsiveness")
-    ax.legend()
-    ax.set_ylim(0, 115)
+    ax.set_ylim(0, 165)  # headroom so the legend clears the 100% bars
+    ax.legend(loc="upper center", ncol=2, framealpha=0.95)
 
     ax = axes[1]
     samples = [int(r["sample"]) for r in dd_rows]
@@ -175,8 +175,9 @@ def make_stale_stats_figure(plt) -> None:
     ax.axvspan(4, 9, color="#e34948", alpha=0.08, label="injected congestion")
     ax.set_xlabel("sample")
     ax.set_ylabel("delay (ms)")
+    ax.set_ylim(top=max(float(r["static_mean"]) for r in dd_rows) * 1.42)
     ax.set_title("(b) Delayed-detection phase: delay vs sample")
-    ax.legend()
+    ax.legend(loc="upper right", framealpha=0.95)
 
     fig.tight_layout()
     _save(fig, "stale_stats")
@@ -261,9 +262,9 @@ def make_congestion_figure(plt) -> None:
     ax.set_xticks(list(x))
     ax.set_xticklabels([phase_labels[p] for p in phases])
     ax.set_ylabel("mean reroute count, n=23 pairs")
-    ax.set_ylim(0, 1.3)
+    ax.set_ylim(0, 1.5)  # headroom for the legend above the 1.0 bars
     ax.set_title("(b) Reroute count per phase")
-    ax.legend()
+    ax.legend(loc="upper center", ncol=3, framealpha=0.95)
 
     fig.tight_layout()
     _save(fig, "congestion")
@@ -567,12 +568,12 @@ def main() -> None:
     import matplotlib.pyplot as plt
     plt.rcParams.update({
         "font.family": "DejaVu Sans",
-        "font.size": 12.5,
-        "axes.titlesize": 14,
-        "axes.labelsize": 13,
-        "legend.fontsize": 11,
-        "xtick.labelsize": 11.5,
-        "ytick.labelsize": 11.5,
+        "font.size": 14,
+        "axes.titlesize": 16,
+        "axes.labelsize": 14.5,
+        "legend.fontsize": 12.5,
+        "xtick.labelsize": 13,
+        "ytick.labelsize": 13,
         "axes.edgecolor": "#c3c2b7",
         "axes.grid": True,
         "grid.color": "#e6e5df",

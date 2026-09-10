@@ -114,7 +114,7 @@ def make_topology_figure(plt) -> None:
         label = graph.nodes[n].get("label", n)
         dx, dy, ha, va = label_off.get(label, default_off)
         ax.annotate(label, (x, y), textcoords="offset points", xytext=(dx, dy),
-                    ha=ha, va=va, fontsize=13, color="#2d3a4c", zorder=5,
+                    ha=ha, va=va, fontsize=14, color="#2d3a4c", zorder=5,
                     path_effects=halo)
 
     # --- Legend (manual proxy artists -- this is a geographic line/scatter
@@ -127,27 +127,26 @@ def make_topology_figure(plt) -> None:
         Line2D([0], [0], color=TIER_STYLE["2.5 Gbps"][1], linewidth=TIER_STYLE["2.5 Gbps"][0], label="2.5 Gbps"),
         Line2D([0], [0], color=TIER_STYLE["1 Gbps"][1], linewidth=TIER_STYLE["1 Gbps"][0], label="1 Gbps"),
         Line2D([0], [0], color=TIER_STYLE["155 Mbps"][1], linewidth=TIER_STYLE["155 Mbps"][0], label="155 Mbps"),
-        Line2D([0], [0], color=TIER_STYLE[None][1], linewidth=TIER_STYLE[None][0], label="no published capacity label"),
+        Line2D([0], [0], color=TIER_STYLE[None][1], linewidth=TIER_STYLE[None][0], label="no capacity label"),
         Line2D([0], [0], color="#e34948", linewidth=2.2, linestyle=(0, (4, 2)),
-               label="structural bridge (12–20, 21–27) — no alternative route"),
-        Line2D([0], [0], color="#1baf7a", linewidth=3.0, label="hotspot link 0–4 (induced-congestion demo)"),
+               label="structural bridge 12–20, 21–27"),
+        Line2D([0], [0], color="#1baf7a", linewidth=3.0, label="hotspot link 0–4"),
         Line2D([0], [0], marker="o", color="none", markerfacecolor="#1baf7a", markeredgecolor="#0d5c3b",
-               markersize=10, label="monitored pair (nodes 0, 12)"),
+               markersize=10, label="monitored pair (0, 12)"),
     ]
-    # Legend below the map (the area south of ~30 degN is empty) so it never
-    # sits on top of the network itself.
-    # Open extra room below/left of the southern-/westernmost nodes (PT, ES,
-    # IL) so the lower-left legend sits on white space, not the graph.
+    # Two-column legend in the lower-left corner. The y-axis is opened just
+    # enough below the southernmost node (IL) that the box sits on white
+    # space -- never on an edge or a label.
     xs = [p[0] for p in pos.values()]
     ys = [p[1] for p in pos.values()]
     ax.set_xlim(min(xs) - 3, max(xs) + 3)
-    ax.set_ylim(min(ys) - 10, max(ys) + 2)
-    ax.legend(handles=legend_elems, loc="lower left", fontsize=12.5,
-              framealpha=0.95, borderaxespad=0.8, handlelength=2.4)
+    ax.set_ylim(min(ys) - 6, max(ys) + 2)
+    ax.legend(handles=legend_elems, loc="lower left", ncol=2, fontsize=13.5,
+              framealpha=0.95, borderaxespad=0.8, handlelength=2.0, columnspacing=1.2)
 
-    ax.set_xlabel("longitude", fontsize=15)
-    ax.set_ylabel("latitude", fontsize=15)
-    ax.tick_params(labelsize=13)
+    ax.set_xlabel("longitude", fontsize=16)
+    ax.set_ylabel("latitude", fontsize=16)
+    ax.tick_params(labelsize=14)
     ax.set_aspect(1.55)  # crude equirectangular correction for this latitude band, not a true projection
     fig.tight_layout()
     for ext in ("png", "pdf"):
